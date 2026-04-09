@@ -1,50 +1,40 @@
 
 
-# תוכנית: המרת הדשבורד לעברית + RTL
+# חיבור שרת Railway ל-Lovable Cloud
 
-## הבעיה
-הדשבורד המקורי שלך (`dashboard.html`) הוא **כולו בעברית עם RTL** — כל הלייבלים, ניווט, כותרות, empty states, ושמות סוכנים בעברית. הדשבורד שנבנה ב-React יצא באנגלית מלאה.
+## מה צריך לעשות
 
-## מה ישתנה
+השרת שלך ב-Railway כבר עובד ומחובר לפרויקט Supabase ישן (`tymaylrydvzcxvgmavvf`). צריך לעדכן 2 משתנים ב-Railway כדי שיצביעו ל-Lovable Cloud החדש (`ckyvvfwpetarfsiqirrf`).
 
-### 1. RTL גלובלי
-- הוספת `dir="rtl"` ו-`lang="he"` ל-`index.html`
-- החלפת פונט Heebo (כמו במקור) כפונט ראשי במקום Inter
-- IBM Plex Mono לנתונים מספריים (כמו במקור)
+## השלבים
 
-### 2. Layout — סיידבר ימני
-- הסיידבר עובר לצד **ימין** (RTL)
-- שמות הטאבים בעברית: סקירה, פוזיציות, סוכנים, אופטימיזציה, חדשות, מוח AI, הגדרות
+### שלב 1: קבלת ה-Service Role Key
+הפרויקט של Lovable Cloud כבר מכיל service role key. אני אשלוף את ה-URL וה-key שצריך.
 
-### 3. כל הדפים — תרגום מלא לעברית
-כל טקסט UI יתורגם בהתאם למקור:
+- **SUPABASE_URL** החדש: `https://ckyvvfwpetarfsiqirrf.supabase.co`
+- **SUPABASE_SERVICE_KEY** — צריך להעתיק מהגדרות Lovable Cloud (אני אעזור לך למצוא אותו)
 
-| דף | דוגמאות לתרגום |
-|---|---|
-| **Dashboard** | "פוזיציות פתוחות", "סיגנלים היום", "עסקאות", "אחוז הצלחה" |
-| **Positions** | "פתוחות/סגורות", "כיוון", "מחיר כניסה", "סטופ", "טייק פרופיט" |
-| **Agents** | שמות קטגוריות: ניתוח, הגנה, מודיעין, אופטימיזציה, ניהול, תפעול. "ביצועי סוכנים", "דיוק" |
-| **Optimization** | "תשואת אימון", "תשואת מבחן", "סיכון התאמת-יתר", "שארפ" |
-| **News** | "סוכן מודיעין חדשות", "סיכון: גבוה/נמוך", "מגזרים מושפעים" |
-| **Brain** | "תובנות AI", "סוג", "ביטחון" |
-| **Settings** | "הגדרות מערכת" |
+### שלב 2: עדכון משתנים ב-Railway
+ב-Railway dashboard, תחליף את שני המשתנים הבאים:
 
-### 4. Empty states בעברית
-- "אין פוזיציות פתוחות" במקום "No open positions"
-- "ממתין לסיגנלים..." במקום "No signals yet"
-- כמו שמופיע ב-dashboard.html המקורי
+| משתנה | ערך ישן | ערך חדש |
+|---|---|---|
+| `SUPABASE_URL` | `https://tymaylrydvzcxvgmavvf.supabase.co` | `https://ckyvvfwpetarfsiqirrf.supabase.co` |
+| `SUPABASE_SERVICE_KEY` | (הישן) | (של Lovable Cloud) |
 
-## קבצים שישתנו
-- `index.html` — dir, lang, fonts
-- `tailwind.config.ts` — Heebo + IBM Plex Mono
-- `src/index.css` — RTL adjustments
-- `src/components/AppLayout.tsx` — ניווט עברית, סיידבר ימין
-- `src/pages/Index.tsx` — דשבורד ראשי בעברית
-- `src/pages/Positions.tsx` — עברית
-- `src/pages/Agents.tsx` — עברית + קטגוריות סוכנים
-- `src/pages/Optimization.tsx` — עברית
-- `src/pages/News.tsx` — עברית
-- `src/pages/Brain.tsx` — עברית
-- `src/pages/SettingsPage.tsx` — עברית
-- `src/components/trading/StatCard.tsx` — RTL fixes
+שאר המשתנים (TWELVE_DATA_API_KEY, TRADERSPOST_WEBHOOK_URL, CLAUDE_API_KEY, FINNHUB_API_KEY, API_KEY, SYMBOLS, PORT, MAX_DAILY_LOSS) **לא צריכים להשתנות** — הם לא קשורים ל-Supabase.
+
+### שלב 3: Redeploy ב-Railway
+אחרי עדכון המשתנים, Railway יעשה redeploy אוטומטי והשרת יתחיל לכתוב נתונים ל-DB החדש.
+
+### שלב 4: אימות
+אני אבדוק שנתונים מתחילים להגיע לטבלאות (signals, positions, agent_logs) דרך query על ה-DB.
+
+## מה אני אעשה בצד שלי
+- אפתח לך גישה ל-Service Role Key דרך Lovable Cloud
+- אוודא שה-DB schema תואם למה שהשרת מצפה (כבר יצרנו 17 טבלאות)
+- אבדוק שנתונים זורמים אחרי החיבור
+
+## הערה חשובה
+הטבלאות ב-Lovable Cloud **כבר נוצרו** עם אותו schema בדיוק כמו בפרויקט הישן, אז השרת אמור לעבוד מיד.
 
