@@ -1,4 +1,4 @@
-import { usePositions, useSignals, useOptimizationResults, useTrackedSymbols } from "@/hooks/use-trading-data";
+import { usePositions, useSignals, useOptimizationResults, useTrackedSymbols, useWeeklyReviews } from "@/hooks/use-trading-data";
 import { cn } from "@/lib/utils";
 
 export default function OverviewPage() {
@@ -7,12 +7,13 @@ export default function OverviewPage() {
   const { data: signals = [] } = useSignals(20);
   const { data: optimizations = [] } = useOptimizationResults();
   const { data: symbols = [] } = useTrackedSymbols();
+  const { data: weeklyReviews = [] } = useWeeklyReviews();
 
   const closedPositions = allPositions.filter((p: any) => p.status === "closed");
   const totalPnl = closedPositions.reduce((s: number, p: any) => s + (p.pnl_pct || 0), 0);
-
   const today = new Date().toISOString().split("T")[0];
   const todaySignals = signals.filter((s: any) => s.timestamp?.startsWith(today));
+  const latestReview = weeklyReviews[0];
 
   return (
     <div className="space-y-5">
@@ -34,9 +35,11 @@ export default function OverviewPage() {
           <div className="text-[10px] text-muted-foreground mt-1">מתוך {optimizations.length} שעברו</div>
         </div>
         <div className="stat-box">
-          <div className="text-[11px] text-muted-foreground font-medium mb-1.5">WebSocket</div>
-          <div className="text-2xl font-bold" style={{ color: 'hsl(var(--trading-warning))' }}>●</div>
-          <div className="text-[10px] text-muted-foreground mt-1">API</div>
+          <div className="text-[11px] text-muted-foreground font-medium mb-1.5">PnL מצטבר</div>
+          <div className={cn("text-2xl font-bold font-mono", totalPnl >= 0 ? "text-trading-profit" : "text-trading-loss")}>
+            {totalPnl >= 0 ? "+" : ""}{totalPnl.toFixed(1)}%
+          </div>
+          <div className="text-[10px] text-muted-foreground mt-1">{closedPositions.length} עסקאות</div>
         </div>
         <div className="stat-box">
           <div className="text-[11px] text-muted-foreground font-medium mb-1.5">Uptime</div>
@@ -44,6 +47,35 @@ export default function OverviewPage() {
           <div className="text-[10px] text-muted-foreground mt-1">Railway</div>
         </div>
       </div>
+
+      {/* Weekly AI Review */}
+      {latestReview && (
+        <div className="surface-card p-[18px]">
+          <div className="flex items-center gap-2 mb-2">
+            <span className="text-base">📅</span>
+            <span className="text-sm font-semibold">סקירה שבועית אחרונה</span>
+            <span className="text-[10px] text-muted-foreground mr-auto">
+              {latestReview.created_at ? new Date(latestReview.created_at).toLocaleDateString("he-IL") : ""}
+            </span>
+          </div>
+          <div className="text-xs font-semibold mb-1">{latestReview.summary}</div>
+          {latestReview.reasoning && <div className="text-[11px] text-muted-foreground mb-2">{latestReview.reasoning}</div>}
+          {latestReview.market_insight && (
+            <div className="text-[11px] p-2 rounded-lg" style={{ background: "rgba(59,130,246,0.06)" }}>
+              <span className="text-primary font-semibold">תובנת שוק: </span>{latestReview.market_insight}
+            </div>
+          )}
+          {Array.isArray(latestReview.agent_lessons) && latestReview.agent_lessons.length > 0 && (
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {(latestReview.agent_lessons as any[]).slice(0, 5).map((l: any, i: number) => (
+                <span key={i} className="badge-pill" style={{ background: "rgba(167,139,250,0.1)", color: "#a78bfa" }}>
+                  {l.agent}: {l.lesson || l.message}
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Tracked symbols */}
       {symbols.length > 0 && (
@@ -70,7 +102,7 @@ export default function OverviewPage() {
         </div>
       )}
 
-      {/* Positions + Decisions */}
+      {/* Positions + Signals */}
       <div className="grid md:grid-cols-2 gap-3.5">
         <div className="surface-card">
           <div className="surface-card-head">
