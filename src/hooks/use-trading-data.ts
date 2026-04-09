@@ -149,3 +149,35 @@ export function useTimeframeProfiles() {
     120000
   );
 }
+
+export function useSystemHealth() {
+  return useQuery({
+    queryKey: ["system_health"],
+    queryFn: async () => {
+      const tables = [
+        { name: "signals", timeCol: "timestamp" },
+        { name: "positions", timeCol: "entry_time" },
+        { name: "agent_logs", timeCol: "timestamp" },
+        { name: "agent_memory", timeCol: "updated_at" },
+        { name: "news_events", timeCol: "timestamp" },
+        { name: "market_data", timeCol: "timestamp" },
+        { name: "optimization_results", timeCol: "optimized_at" },
+        { name: "ai_insights", timeCol: "created_at" },
+        { name: "tracked_symbols", timeCol: "created_at" },
+        { name: "agent_feedback", timeCol: "close_time" },
+        { name: "trade_summaries", timeCol: "created_at" },
+      ] as const;
+
+      const results = await Promise.all(
+        tables.map(async (t) => {
+          const { count } = await supabase.from(t.name).select("*", { count: "exact", head: true });
+          const { data } = await supabase.from(t.name).select(t.timeCol).order(t.timeCol, { ascending: false }).limit(1);
+          const lastUpdate = data?.[0]?.[t.timeCol] || null;
+          return { table: t.name, count: count || 0, lastUpdate };
+        })
+      );
+      return results;
+    },
+    refetchInterval: 30000,
+  });
+}

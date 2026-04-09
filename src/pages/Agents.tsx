@@ -5,20 +5,21 @@ import { Badge } from "@/components/ui/badge";
 import { PnlBadge, StatusDot } from "@/components/trading/StatCard";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
-const AGENT_NAMES = [
-  "vix", "health", "memory", "ceo", "psychology", "selfImprove",
-  "correlation", "liquidity", "anomaly", "sectorRotation", "universeScanner",
-  "timeframeOptimizer", "knowledge", "devilsAdvocate", "backtestValidator",
-  "news", "feedbackLoop", "coordinator", "learningAdapter", "brain", "newsResearch"
+// Agent IDs as they appear in the DB (snake_case)
+const AGENT_IDS = [
+  "vix", "health", "memory", "ceo", "psychology", "self_improve",
+  "correlation", "liquidity", "anomaly", "sector_rotation", "universe_scanner",
+  "timeframe_optimizer", "knowledge", "devils_advocate", "backtest_validator",
+  "news", "feedback_loop", "coordinator", "learning_adapter", "brain", "news_research"
 ];
 
 const AGENT_LABELS: Record<string, string> = {
   vix: "VIX", health: "בריאות", memory: "זיכרון", ceo: "מנכ״ל", psychology: "פסיכולוגיה",
-  selfImprove: "שיפור עצמי", correlation: "קורלציה", liquidity: "נזילות", anomaly: "אנומליה",
-  sectorRotation: "רוטציית סקטורים", universeScanner: "סורק יקום", timeframeOptimizer: "אופטימיזר טיימפריים",
-  knowledge: "ידע", devilsAdvocate: "פרקליט שטן", backtestValidator: "מאמת בקטסט",
-  news: "חדשות", feedbackLoop: "לולאת משוב", coordinator: "מתאם", learningAdapter: "מתאם למידה",
-  brain: "מוח", newsResearch: "מחקר חדשות"
+  self_improve: "שיפור עצמי", correlation: "קורלציה", liquidity: "נזילות", anomaly: "אנומליה",
+  sector_rotation: "רוטציית סקטורים", universe_scanner: "סורק יקום", timeframe_optimizer: "אופטימיזר טיימפריים",
+  knowledge: "ידע", devils_advocate: "פרקליט שטן", backtest_validator: "מאמת בקטסט",
+  news: "חדשות", feedback_loop: "לולאת משוב", coordinator: "מתאם", learning_adapter: "מתאם למידה",
+  brain: "מוח", news_research: "מחקר חדשות"
 };
 
 export default function AgentsPage() {
@@ -42,7 +43,7 @@ export default function AgentsPage() {
 
         <TabsContent value="status">
           <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-3">
-            {AGENT_NAMES.map((name) => {
+            {AGENT_IDS.map((name) => {
               const mem = memoryMap.get(name) as any;
               const state = mem?.state || {};
               return (

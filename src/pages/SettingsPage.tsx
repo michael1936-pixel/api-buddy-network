@@ -1,10 +1,30 @@
-import { useTrackedSymbols } from "@/hooks/use-trading-data";
+import { useTrackedSymbols, useSystemHealth } from "@/hooks/use-trading-data";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Settings as SettingsIcon, Database, Server, Shield } from "lucide-react";
+import { Settings as SettingsIcon, Database, Server, Shield, HeartPulse } from "lucide-react";
+import { StatusDot } from "@/components/trading/StatCard";
 
 export default function SettingsPage() {
   const { data: symbols = [] } = useTrackedSymbols();
+  const { data: health = [] } = useSystemHealth();
+
+  const formatAgo = (ts: string | null) => {
+    if (!ts) return "אף פעם";
+    const diff = Date.now() - new Date(ts).getTime();
+    const mins = Math.floor(diff / 60000);
+    if (mins < 1) return "עכשיו";
+    if (mins < 60) return `לפני ${mins} דק׳`;
+    const hrs = Math.floor(mins / 60);
+    if (hrs < 24) return `לפני ${hrs} שע׳`;
+    return `לפני ${Math.floor(hrs / 24)} ימים`;
+  };
+
+  const TABLE_LABELS: Record<string, string> = {
+    signals: "סיגנלים", positions: "פוזיציות", agent_logs: "לוגי סוכנים",
+    agent_memory: "זיכרון סוכנים", news_events: "אירועי חדשות", market_data: "נתוני שוק",
+    optimization_results: "אופטימיזציה", ai_insights: "תובנות AI", tracked_symbols: "מניות במעקב",
+    agent_feedback: "משוב סוכנים", trade_summaries: "סיכומי עסקאות",
+  };
 
   return (
     <div className="space-y-6">
@@ -81,6 +101,31 @@ export default function SettingsPage() {
               ))}
             </div>
           )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base flex items-center gap-2">
+            <HeartPulse className="h-4 w-4" />
+            בריאות מערכת
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+            {health.map((h: any) => (
+              <div key={h.table} className="flex items-center justify-between py-1.5 px-3 rounded-md bg-secondary/50 text-sm">
+                <div className="flex items-center gap-2">
+                  <StatusDot status={h.count > 0 ? "online" : "offline"} />
+                  <span>{TABLE_LABELS[h.table] || h.table}</span>
+                </div>
+                <div className="flex items-center gap-3">
+                  <span className="font-mono text-xs">{h.count.toLocaleString()} שורות</span>
+                  <span className="text-[10px] text-muted-foreground w-24 text-left">{formatAgo(h.lastUpdate)}</span>
+                </div>
+              </div>
+            ))}
+          </div>
         </CardContent>
       </Card>
 
