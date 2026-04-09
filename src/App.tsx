@@ -5,11 +5,12 @@ import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import AppLayout from "@/components/AppLayout";
 import Index from "./pages/Index";
-import Positions from "./pages/Positions";
 import Agents from "./pages/Agents";
-import Optimization from "./pages/Optimization";
+import Pipeline from "./pages/Pipeline";
+import Decisions from "./pages/Decisions";
 import News from "./pages/News";
-import Brain from "./pages/Brain";
+import Backtest from "./pages/Backtest";
+import Learning from "./pages/Learning";
 import SettingsPage from "./pages/SettingsPage";
 import NotFound from "./pages/NotFound";
 
@@ -24,11 +25,12 @@ const App = () => (
         <AppLayout>
           <Routes>
             <Route path="/" element={<Index />} />
-            <Route path="/positions" element={<Positions />} />
             <Route path="/agents" element={<Agents />} />
-            <Route path="/optimization" element={<Optimization />} />
+            <Route path="/pipeline" element={<Pipeline />} />
+            <Route path="/decisions" element={<Decisions />} />
             <Route path="/news" element={<News />} />
-            <Route path="/brain" element={<Brain />} />
+            <Route path="/backtest" element={<Backtest />} />
+            <Route path="/learning" element={<Learning />} />
             <Route path="/settings" element={<SettingsPage />} />
             <Route path="*" element={<NotFound />} />
           </Routes>

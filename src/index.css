@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Heebo:wght@300;400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Heebo:wght@300;400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
 
 @tailwind base;
 @tailwind components;
@@ -6,43 +6,6 @@
 
 @layer base {
   :root {
-    --background: 220 20% 97%;
-    --foreground: 220 20% 10%;
-    --card: 0 0% 100%;
-    --card-foreground: 220 20% 10%;
-    --popover: 0 0% 100%;
-    --popover-foreground: 220 20% 10%;
-    --primary: 217 91% 60%;
-    --primary-foreground: 0 0% 100%;
-    --secondary: 220 14% 92%;
-    --secondary-foreground: 220 20% 10%;
-    --muted: 220 14% 92%;
-    --muted-foreground: 220 10% 50%;
-    --accent: 220 14% 92%;
-    --accent-foreground: 220 20% 10%;
-    --destructive: 0 72% 51%;
-    --destructive-foreground: 0 0% 100%;
-    --border: 220 13% 88%;
-    --input: 220 13% 88%;
-    --ring: 217 91% 60%;
-    --radius: 0.5rem;
-
-    --trading-profit: 142 71% 45%;
-    --trading-loss: 0 72% 51%;
-    --trading-neutral: 220 10% 50%;
-    --trading-warning: 38 92% 50%;
-
-    --sidebar-background: 222 47% 8%;
-    --sidebar-foreground: 213 31% 91%;
-    --sidebar-primary: 217 91% 60%;
-    --sidebar-primary-foreground: 0 0% 100%;
-    --sidebar-accent: 217 33% 17%;
-    --sidebar-accent-foreground: 213 31% 91%;
-    --sidebar-border: 217 33% 17%;
-    --sidebar-ring: 217 91% 60%;
-  }
-
-  .dark {
     --background: 222 47% 6%;
     --foreground: 213 31% 91%;
     --card: 222 47% 8%;
@@ -59,14 +22,19 @@
     --accent-foreground: 213 31% 91%;
     --destructive: 0 62% 45%;
     --destructive-foreground: 0 0% 100%;
-    --border: 217 33% 17%;
+    --border: 220 15% 15%;
     --input: 217 33% 17%;
     --ring: 217 91% 60%;
+    --radius: 0.875rem;
 
-    --trading-profit: 142 71% 45%;
-    --trading-loss: 0 72% 55%;
+    --trading-profit: 160 84% 39%;
+    --trading-loss: 0 91% 71%;
     --trading-neutral: 215 20% 55%;
-    --trading-warning: 38 92% 55%;
+    --trading-warning: 45 93% 56%;
+
+    --surface: 222 40% 10%;
+    --surface2: 222 35% 14%;
+    --surface3: 222 30% 18%;
 
     --sidebar-background: 222 47% 5%;
     --sidebar-foreground: 213 31% 91%;
@@ -87,15 +55,96 @@
   body {
     @apply bg-background text-foreground;
     font-family: 'Heebo', sans-serif;
+    overflow-x: hidden;
   }
 
   html {
-    @apply dark;
+    direction: rtl;
   }
 }
 
 @layer utilities {
   .font-mono {
     font-family: 'IBM Plex Mono', monospace;
+  }
+}
+
+@layer components {
+  .topbar {
+    @apply sticky top-0 z-50 border-b border-border;
+    background: rgba(19, 24, 37, 0.92);
+    backdrop-filter: blur(20px);
+  }
+
+  .tab-btn {
+    @apply text-muted-foreground text-[13px] font-medium px-4 py-2 rounded-lg cursor-pointer transition-colors;
+  }
+  .tab-btn:hover {
+    @apply text-foreground bg-accent;
+  }
+  .tab-btn.active {
+    color: hsl(var(--primary));
+    background: hsla(217, 91%, 60%, 0.1);
+  }
+
+  .surface-card {
+    background: hsl(var(--surface));
+    @apply border border-border rounded-[14px] overflow-hidden transition-colors;
+  }
+
+  .surface-card-head {
+    @apply py-3.5 px-[18px] border-b border-border flex justify-between items-center;
+  }
+
+  .stat-box {
+    background: hsl(var(--surface));
+    @apply border border-border rounded-[14px] p-4 transition-transform;
+  }
+  .stat-box:active {
+    transform: scale(0.98);
+  }
+
+  .agent-card-item {
+    background: hsl(var(--surface));
+    @apply border border-border rounded-lg p-3 flex items-center gap-2.5 cursor-pointer transition-all;
+  }
+  .agent-card-item:active {
+    transform: scale(0.97);
+    background: hsl(var(--surface2));
+  }
+
+  .empty-state {
+    @apply text-center py-12;
+  }
+  .empty-state-icon {
+    @apply text-5xl mb-4 opacity-70;
+  }
+  .empty-state-text {
+    @apply text-sm text-muted-foreground;
+  }
+  .empty-state-sub {
+    @apply text-xs text-muted-foreground/70 mt-2;
+  }
+
+  .row-item {
+    @apply flex items-center gap-2 py-2.5 px-[18px] border-b border-border text-xs transition-colors;
+  }
+  .row-item:last-child {
+    @apply border-b-0;
+  }
+  .row-item:active {
+    background: hsl(var(--surface2));
+  }
+
+  .badge-pill {
+    @apply py-0.5 px-2.5 rounded-md font-semibold text-[10px] tracking-wide;
+  }
+
+  .progress-bar {
+    @apply h-[5px] rounded-[3px] overflow-hidden;
+    background: hsl(var(--surface3));
+  }
+  .progress-bar-fill {
+    @apply h-full rounded-[3px] transition-all duration-500;
   }
 }
