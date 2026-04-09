@@ -8,7 +8,6 @@ export default function LearningPage() {
   return (
     <div className="space-y-4">
       <div className="grid md:grid-cols-2 gap-3.5">
-        {/* Principle rankings placeholder */}
         <div className="surface-card p-[18px]">
           <div className="text-sm font-semibold mb-3.5">דירוג עקרונות</div>
           <div className="empty-state">
@@ -17,7 +16,6 @@ export default function LearningPage() {
         </div>
 
         <div>
-          {/* Knowledge base */}
           <div className="surface-card p-[18px] mb-3.5">
             <div className="text-sm font-semibold mb-3.5">בסיס ידע</div>
             <div className="grid grid-cols-2 gap-2.5">
@@ -39,7 +37,6 @@ export default function LearningPage() {
             </div>
           </div>
 
-          {/* Monthly summaries */}
           {summaries.length > 0 && (
             <div className="surface-card p-[18px]">
               <div className="text-sm font-semibold mb-3">סיכומים חודשיים</div>
@@ -63,7 +60,6 @@ export default function LearningPage() {
         </div>
       </div>
 
-      {/* AI Insights */}
       {insights.length > 0 && (
         <div className="surface-card">
           <div className="surface-card-head">

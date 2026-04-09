@@ -7,13 +7,11 @@ export default function BacktestPage() {
 
   return (
     <div className="space-y-4">
-      {/* SP500 Grid Header */}
       <div className="flex justify-between items-center">
         <span className="text-base font-semibold">S&P 500 — {tracked.length || "~420"} מניות</span>
         <span className="text-[11px] text-muted-foreground">✅ {tracked.filter((s: any) => s.is_active).length} פעילות | 🔬 {optimizations.length} נסרקו</span>
       </div>
 
-      {/* Tracked symbols grid */}
       {tracked.length > 0 && (
         <div className="grid grid-cols-[repeat(auto-fill,minmax(90px,1fr))] gap-1">
           {tracked.map((s: any) => {
@@ -41,7 +39,6 @@ export default function BacktestPage() {
         </div>
       )}
 
-      {/* Results table */}
       {optimizations.length > 0 ? (
         <div className="surface-card">
           <div className="surface-card-head">
