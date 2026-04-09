@@ -13,13 +13,13 @@ import {
 import { cn } from "@/lib/utils";
 
 const navItems = [
-  { to: "/", label: "Dashboard", icon: LayoutDashboard },
-  { to: "/positions", label: "Positions", icon: TrendingUp },
-  { to: "/agents", label: "Agents", icon: Bot },
-  { to: "/optimization", label: "Optimization", icon: BarChart3 },
-  { to: "/news", label: "News", icon: Newspaper },
-  { to: "/brain", label: "AI Brain", icon: Brain },
-  { to: "/settings", label: "Settings", icon: Settings },
+  { to: "/", label: "סקירה", icon: LayoutDashboard },
+  { to: "/positions", label: "פוזיציות", icon: TrendingUp },
+  { to: "/agents", label: "סוכנים", icon: Bot },
+  { to: "/optimization", label: "אופטימיזציה", icon: BarChart3 },
+  { to: "/news", label: "חדשות", icon: Newspaper },
+  { to: "/brain", label: "מוח AI", icon: Brain },
+  { to: "/settings", label: "הגדרות", icon: Settings },
 ];
 
 export default function AppLayout({ children }: { children: ReactNode }) {
@@ -27,8 +27,8 @@ export default function AppLayout({ children }: { children: ReactNode }) {
 
   return (
     <div className="flex h-screen overflow-hidden">
-      {/* Sidebar */}
-      <aside className="hidden md:flex w-64 flex-col bg-sidebar border-r border-sidebar-border">
+      {/* Sidebar - appears on the right in RTL */}
+      <aside className="hidden md:flex w-64 flex-col bg-sidebar border-l border-sidebar-border order-last">
         {/* Logo */}
         <div className="flex items-center gap-3 px-6 py-5 border-b border-sidebar-border">
           <div className="h-8 w-8 rounded-lg bg-primary flex items-center justify-center">
@@ -36,7 +36,7 @@ export default function AppLayout({ children }: { children: ReactNode }) {
           </div>
           <div>
             <h1 className="text-sm font-semibold text-sidebar-foreground">AlgoMaykl</h1>
-            <p className="text-[10px] text-muted-foreground">AI Trading System v3</p>
+            <p className="text-[10px] text-muted-foreground">מערכת מסחר AI v3</p>
           </div>
         </div>
 
@@ -66,7 +66,7 @@ export default function AppLayout({ children }: { children: ReactNode }) {
         <div className="px-4 py-3 border-t border-sidebar-border">
           <div className="flex items-center gap-2">
             <div className="h-2 w-2 rounded-full bg-trading-profit animate-pulse-glow" />
-            <span className="text-xs text-muted-foreground">System Online</span>
+            <span className="text-xs text-muted-foreground">מערכת פעילה</span>
           </div>
         </div>
       </aside>
@@ -102,7 +102,7 @@ export default function AppLayout({ children }: { children: ReactNode }) {
       </div>
 
       {/* Main */}
-      <main className="flex-1 overflow-y-auto md:pt-0 pt-24">
+      <main className="flex-1 overflow-y-auto md:pt-0 pt-24 order-first">
         <div className="p-4 md:p-6 max-w-[1600px] mx-auto">{children}</div>
       </main>
     </div>

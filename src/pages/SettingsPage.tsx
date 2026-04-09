@@ -8,51 +8,50 @@ export default function SettingsPage() {
 
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-semibold">Settings</h1>
+      <h1 className="text-2xl font-semibold">הגדרות</h1>
 
-      {/* System Info */}
       <Card>
         <CardHeader className="pb-3">
           <CardTitle className="text-base flex items-center gap-2">
             <Server className="h-4 w-4" />
-            System Configuration
+            תצורת מערכת
           </CardTitle>
         </CardHeader>
         <CardContent>
           <div className="grid md:grid-cols-2 gap-4 text-sm">
             <div className="space-y-2">
               <div className="flex justify-between py-1 border-b border-border/50">
-                <span className="text-muted-foreground">Timeframe</span>
+                <span className="text-muted-foreground">טיימפריים</span>
                 <span className="font-mono">15min</span>
               </div>
               <div className="flex justify-between py-1 border-b border-border/50">
-                <span className="text-muted-foreground">Max Positions</span>
+                <span className="text-muted-foreground">מקסימום פוזיציות</span>
                 <span className="font-mono">10</span>
               </div>
               <div className="flex justify-between py-1 border-b border-border/50">
-                <span className="text-muted-foreground">Stock Data</span>
-                <span className="font-mono">5 years</span>
+                <span className="text-muted-foreground">נתוני מניות</span>
+                <span className="font-mono">5 שנים</span>
               </div>
               <div className="flex justify-between py-1 border-b border-border/50">
-                <span className="text-muted-foreground">Reference Data</span>
-                <span className="font-mono">15 years (SPY, VIX)</span>
+                <span className="text-muted-foreground">נתוני ייחוס</span>
+                <span className="font-mono">15 שנים (SPY, VIX)</span>
               </div>
             </div>
             <div className="space-y-2">
               <div className="flex justify-between py-1 border-b border-border/50">
-                <span className="text-muted-foreground">Max Daily Loss</span>
+                <span className="text-muted-foreground">הפסד יומי מקסימלי</span>
                 <span className="font-mono text-trading-loss">-3%</span>
               </div>
               <div className="flex justify-between py-1 border-b border-border/50">
-                <span className="text-muted-foreground">Optimization Staleness</span>
-                <span className="font-mono">14 days</span>
+                <span className="text-muted-foreground">התיישנות אופטימיזציה</span>
+                <span className="font-mono">14 ימים</span>
               </div>
               <div className="flex justify-between py-1 border-b border-border/50">
-                <span className="text-muted-foreground">Weekly Optimization</span>
-                <span className="font-mono">Sunday</span>
+                <span className="text-muted-foreground">אופטימיזציה שבועית</span>
+                <span className="font-mono">יום ראשון</span>
               </div>
               <div className="flex justify-between py-1 border-b border-border/50">
-                <span className="text-muted-foreground">Active Agents</span>
+                <span className="text-muted-foreground">סוכנים פעילים</span>
                 <span className="font-mono">21</span>
               </div>
             </div>
@@ -60,24 +59,23 @@ export default function SettingsPage() {
         </CardContent>
       </Card>
 
-      {/* Tracked Symbols */}
       <Card>
         <CardHeader className="pb-3">
           <CardTitle className="text-base flex items-center gap-2">
             <Database className="h-4 w-4" />
-            Tracked Symbols ({symbols.length})
+            מניות במעקב ({symbols.length})
           </CardTitle>
         </CardHeader>
         <CardContent>
           {symbols.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No tracked symbols</p>
+            <p className="text-sm text-muted-foreground">אין מניות במעקב</p>
           ) : (
             <div className="flex flex-wrap gap-2">
               {symbols.map((s: any) => (
                 <Badge key={s.symbol} variant="outline" className="font-mono text-sm px-3 py-1">
                   {s.symbol}
                   {s.total_bars > 0 && (
-                    <span className="ml-2 text-[10px] text-muted-foreground">{s.total_bars.toLocaleString()} bars</span>
+                    <span className="mr-2 text-[10px] text-muted-foreground">{s.total_bars.toLocaleString()} נרות</span>
                   )}
                 </Badge>
               ))}
@@ -86,20 +84,19 @@ export default function SettingsPage() {
         </CardContent>
       </Card>
 
-      {/* Architecture */}
       <Card>
         <CardHeader className="pb-3">
           <CardTitle className="text-base flex items-center gap-2">
             <Shield className="h-4 w-4" />
-            Architecture
+            ארכיטקטורה
           </CardTitle>
         </CardHeader>
         <CardContent className="text-sm text-muted-foreground space-y-2">
-          <p>• <strong className="text-foreground">Trading Server</strong> — Node.js/Express running on external host (Railway/VPS). Executes signals every 15min cycle.</p>
-          <p>• <strong className="text-foreground">Database</strong> — Lovable Cloud (Supabase) with 17 tables. Shared between server and dashboard.</p>
-          <p>• <strong className="text-foreground">Dashboard</strong> — This React app. Reads directly from the database in real-time.</p>
-          <p>• <strong className="text-foreground">Execution</strong> — TradersPost webhook for order routing to broker.</p>
-          <p>• <strong className="text-foreground">Data Sources</strong> — Twelve Data (OHLCV), Finnhub (news), Claude API (AI analysis).</p>
+          <p>• <strong className="text-foreground">שרת מסחר</strong> — Node.js/Express רץ על Railway. מריץ סיגנלים כל 15 דקות.</p>
+          <p>• <strong className="text-foreground">בסיס נתונים</strong> — Lovable Cloud עם 17 טבלאות. משותף לשרת ולדשבורד.</p>
+          <p>• <strong className="text-foreground">דשבורד</strong> — אפליקציית React זו. קוראת ישירות מבסיס הנתונים בזמן אמת.</p>
+          <p>• <strong className="text-foreground">ביצוע</strong> — TradersPost webhook לניתוב פקודות לברוקר.</p>
+          <p>• <strong className="text-foreground">מקורות מידע</strong> — Twelve Data (OHLCV), Finnhub (חדשות), Claude API (ניתוח AI).</p>
         </CardContent>
       </Card>
     </div>

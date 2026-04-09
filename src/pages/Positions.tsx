@@ -1,5 +1,5 @@
 import { usePositions } from "@/hooks/use-trading-data";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { PnlBadge } from "@/components/trading/StatCard";
@@ -13,35 +13,35 @@ export default function PositionsPage() {
 
   const formatDate = (d: string) => {
     if (!d) return "—";
-    return new Date(d).toLocaleDateString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+    return new Date(d).toLocaleDateString("he-IL", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
   };
 
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-semibold">Positions</h1>
+      <h1 className="text-2xl font-semibold">פוזיציות</h1>
 
       <Tabs defaultValue="open">
         <TabsList>
-          <TabsTrigger value="open">Open ({openPositions.length})</TabsTrigger>
-          <TabsTrigger value="closed">Closed ({closedPositions.length})</TabsTrigger>
+          <TabsTrigger value="open">פתוחות ({openPositions.length})</TabsTrigger>
+          <TabsTrigger value="closed">סגורות ({closedPositions.length})</TabsTrigger>
         </TabsList>
 
         <TabsContent value="open">
           <Card>
             <CardContent className="pt-6">
               {openPositions.length === 0 ? (
-                <p className="text-sm text-muted-foreground text-center py-12">No open positions</p>
+                <p className="text-sm text-muted-foreground text-center py-12">אין פוזיציות פתוחות</p>
               ) : (
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead>Symbol</TableHead>
-                      <TableHead>Direction</TableHead>
-                      <TableHead>Entry Price</TableHead>
-                      <TableHead>Stop Loss</TableHead>
-                      <TableHead>Take Profit</TableHead>
-                      <TableHead>Strategy</TableHead>
-                      <TableHead>Entry Time</TableHead>
+                      <TableHead>סימול</TableHead>
+                      <TableHead>כיוון</TableHead>
+                      <TableHead>מחיר כניסה</TableHead>
+                      <TableHead>סטופ לוס</TableHead>
+                      <TableHead>טייק פרופיט</TableHead>
+                      <TableHead>אסטרטגיה</TableHead>
+                      <TableHead>זמן כניסה</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -49,7 +49,9 @@ export default function PositionsPage() {
                       <TableRow key={p.id}>
                         <TableCell className="font-mono font-medium">{p.symbol}</TableCell>
                         <TableCell>
-                          <Badge variant={p.direction === "long" ? "default" : "destructive"}>{p.direction?.toUpperCase()}</Badge>
+                          <Badge variant={p.direction === "long" ? "default" : "destructive"}>
+                            {p.direction === "long" ? "לונג" : "שורט"}
+                          </Badge>
                         </TableCell>
                         <TableCell className="font-mono">${p.entry_price?.toFixed(2)}</TableCell>
                         <TableCell className="font-mono text-trading-loss">{p.stop_price ? `$${p.stop_price.toFixed(2)}` : "—"}</TableCell>
@@ -69,18 +71,18 @@ export default function PositionsPage() {
           <Card>
             <CardContent className="pt-6">
               {closedPositions.length === 0 ? (
-                <p className="text-sm text-muted-foreground text-center py-12">No closed trades yet</p>
+                <p className="text-sm text-muted-foreground text-center py-12">אין עסקאות סגורות עדיין</p>
               ) : (
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead>Symbol</TableHead>
-                      <TableHead>Direction</TableHead>
-                      <TableHead>Entry</TableHead>
-                      <TableHead>Exit</TableHead>
-                      <TableHead>P&L</TableHead>
-                      <TableHead>Strategy</TableHead>
-                      <TableHead>Exit Time</TableHead>
+                      <TableHead>סימול</TableHead>
+                      <TableHead>כיוון</TableHead>
+                      <TableHead>כניסה</TableHead>
+                      <TableHead>יציאה</TableHead>
+                      <TableHead>רווח/הפסד</TableHead>
+                      <TableHead>אסטרטגיה</TableHead>
+                      <TableHead>זמן יציאה</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -88,7 +90,9 @@ export default function PositionsPage() {
                       <TableRow key={p.id}>
                         <TableCell className="font-mono font-medium">{p.symbol}</TableCell>
                         <TableCell>
-                          <Badge variant={p.direction === "long" ? "default" : "destructive"}>{p.direction?.toUpperCase()}</Badge>
+                          <Badge variant={p.direction === "long" ? "default" : "destructive"}>
+                            {p.direction === "long" ? "לונג" : "שורט"}
+                          </Badge>
                         </TableCell>
                         <TableCell className="font-mono">${p.entry_price?.toFixed(2)}</TableCell>
                         <TableCell className="font-mono">${p.exit_price?.toFixed(2)}</TableCell>

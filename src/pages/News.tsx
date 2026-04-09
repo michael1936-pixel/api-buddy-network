@@ -1,5 +1,5 @@
 import { useNewsEvents } from "@/hooks/use-trading-data";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 
@@ -7,6 +7,18 @@ const impactColors: Record<string, string> = {
   high: "bg-trading-loss/15 text-trading-loss",
   medium: "bg-trading-warning/15 text-trading-warning",
   low: "bg-muted text-muted-foreground",
+};
+
+const impactLabels: Record<string, string> = {
+  high: "גבוה",
+  medium: "בינוני",
+  low: "נמוך",
+};
+
+const sentimentLabels: Record<string, string> = {
+  bullish: "שורי",
+  bearish: "דובי",
+  neutral: "ניטרלי",
 };
 
 const sentimentColors: Record<string, string> = {
@@ -20,13 +32,13 @@ export default function NewsPage() {
 
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-semibold">News & Research</h1>
-      <p className="text-sm text-muted-foreground">Market news intelligence and impact analysis</p>
+      <h1 className="text-2xl font-semibold">חדשות ומחקר</h1>
+      <p className="text-sm text-muted-foreground">מודיעין חדשות שוק וניתוח השפעה</p>
 
       {news.length === 0 ? (
         <Card>
           <CardContent className="py-12">
-            <p className="text-sm text-muted-foreground text-center">No news events captured yet. The news agent will populate this once the server is running.</p>
+            <p className="text-sm text-muted-foreground text-center">אין אירועי חדשות עדיין. סוכן החדשות ימלא את הנתונים ברגע שהשרת יפעל.</p>
           </CardContent>
         </Card>
       ) : (
@@ -44,11 +56,11 @@ export default function NewsPage() {
                       <Badge variant="outline" className="text-xs">{n.category}</Badge>
                       {n.subcategory && <Badge variant="outline" className="text-xs">{n.subcategory}</Badge>}
                       <span className={cn("text-xs px-2 py-0.5 rounded", impactColors[n.impact_level] || impactColors.low)}>
-                        {n.impact_level} impact
+                        השפעה: {impactLabels[n.impact_level] || n.impact_level}
                       </span>
                       {n.sentiment && (
                         <span className={cn("text-xs", sentimentColors[n.sentiment] || "text-muted-foreground")}>
-                          {n.sentiment}
+                          {sentimentLabels[n.sentiment] || n.sentiment}
                         </span>
                       )}
                     </div>
@@ -60,9 +72,9 @@ export default function NewsPage() {
                       </div>
                     )}
                   </div>
-                  <div className="text-right shrink-0">
+                  <div className="text-left shrink-0">
                     <div className="text-xs text-muted-foreground">
-                      {new Date(n.timestamp).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
+                      {new Date(n.timestamp).toLocaleDateString("he-IL", { month: "short", day: "numeric" })}
                     </div>
                     {n.reaction_recorded && (
                       <div className="mt-1 space-y-0.5">

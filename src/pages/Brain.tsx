@@ -1,12 +1,12 @@
 import { useAIInsights } from "@/hooks/use-trading-data";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Brain, Lightbulb, Eye, Calendar } from "lucide-react";
 
 const typeConfig: Record<string, { label: string; icon: typeof Brain; color: string }> = {
-  trade_analysis: { label: "Trade Analysis", icon: Eye, color: "bg-primary/15 text-primary" },
-  shadow_analysis: { label: "Shadow Trade", icon: Lightbulb, color: "bg-trading-warning/15 text-trading-warning" },
-  weekly_review: { label: "Weekly Review", icon: Calendar, color: "bg-trading-profit/15 text-trading-profit" },
+  trade_analysis: { label: "ניתוח עסקה", icon: Eye, color: "bg-primary/15 text-primary" },
+  shadow_analysis: { label: "עסקת צל", icon: Lightbulb, color: "bg-trading-warning/15 text-trading-warning" },
+  weekly_review: { label: "סיכום שבועי", icon: Calendar, color: "bg-trading-profit/15 text-trading-profit" },
 };
 
 export default function BrainPage() {
@@ -17,8 +17,8 @@ export default function BrainPage() {
       <div className="flex items-center gap-3">
         <Brain className="h-6 w-6 text-primary" />
         <div>
-          <h1 className="text-2xl font-semibold">AI Brain</h1>
-          <p className="text-sm text-muted-foreground">Claude's deep analysis — trade reasoning, shadow trades, and weekly reviews</p>
+          <h1 className="text-2xl font-semibold">מוח AI</h1>
+          <p className="text-sm text-muted-foreground">ניתוח עומק של Claude — חשיבה על עסקאות, עסקאות צל, וסקירות שבועיות</p>
         </div>
       </div>
 
@@ -27,7 +27,7 @@ export default function BrainPage() {
           <CardContent className="py-12">
             <div className="text-center">
               <Brain className="h-12 w-12 text-muted-foreground/30 mx-auto mb-3" />
-              <p className="text-sm text-muted-foreground">No AI insights yet. The AI Brain generates insights after trades close and during weekly reviews.</p>
+              <p className="text-sm text-muted-foreground">אין תובנות AI עדיין. המוח מייצר תובנות לאחר סגירת עסקאות ובסקירות שבועיות.</p>
             </div>
           </CardContent>
         </Card>
@@ -47,7 +47,7 @@ export default function BrainPage() {
                       <div className="flex items-center gap-2 mb-1">
                         <Badge variant="outline" className="text-xs">{config.label}</Badge>
                         <span className="text-xs text-muted-foreground">
-                          {new Date(insight.created_at).toLocaleDateString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
+                          {new Date(insight.created_at).toLocaleDateString("he-IL", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
                         </span>
                       </div>
                       <p className="text-sm font-medium">{insight.summary}</p>
@@ -56,7 +56,7 @@ export default function BrainPage() {
                       )}
                       {insight.market_insight && (
                         <div className="mt-2 px-3 py-2 rounded bg-secondary/50 text-xs text-muted-foreground">
-                          <span className="font-medium text-foreground">Market Insight: </span>
+                          <span className="font-medium text-foreground">תובנת שוק: </span>
                           {insight.market_insight}
                         </div>
                       )}
@@ -64,7 +64,7 @@ export default function BrainPage() {
                         <div className="mt-2 flex flex-wrap gap-1">
                           {insight.agent_lessons.map((lesson: any, i: number) => (
                             <Badge key={i} variant="secondary" className="text-[10px]">
-                              {lesson.agent}: {lesson.action || lesson.lesson || "adjusted"}
+                              {lesson.agent}: {lesson.action || lesson.lesson || "עודכן"}
                             </Badge>
                           ))}
                         </div>
