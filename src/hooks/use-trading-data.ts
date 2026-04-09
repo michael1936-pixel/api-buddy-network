@@ -138,6 +138,42 @@ export function useTradeSummaries() {
   );
 }
 
+export function useKnowledgeLearning(limit = 200) {
+  return useTableQuery(
+    ["knowledge_learning", String(limit)],
+    async () => {
+      const { data, error } = await supabase.from("knowledge_learning").select("*").order("timestamp", { ascending: false }).limit(limit);
+      if (error) throw error;
+      return data || [];
+    },
+    60000
+  );
+}
+
+export function useLearningSnapshots() {
+  return useTableQuery(
+    ["learning_snapshots"],
+    async () => {
+      const { data, error } = await supabase.from("learning_snapshots").select("*").order("created_at", { ascending: false }).limit(5);
+      if (error) throw error;
+      return data || [];
+    },
+    120000
+  );
+}
+
+export function useWeeklyReviews() {
+  return useTableQuery(
+    ["weekly_reviews"],
+    async () => {
+      const { data, error } = await supabase.from("ai_insights").select("*").eq("type", "weekly_review").order("created_at", { ascending: false }).limit(10);
+      if (error) throw error;
+      return data || [];
+    },
+    300000
+  );
+}
+
 export function useTimeframeProfiles() {
   return useTableQuery(
     ["timeframe_profiles"],
