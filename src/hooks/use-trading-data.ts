@@ -1,53 +1,15 @@
 import { supabase } from "@/integrations/supabase/client";
 import { useQuery } from "@tanstack/react-query";
 
-// Generic hook to query any table
-function useSupabaseQuery<T>(
+// Generic hook to query any table with raw query builder
+function useTableQuery<T = any>(
   key: string[],
-  tableName: string,
-  options?: {
-    select?: string;
-    orderBy?: { column: string; ascending?: boolean };
-    limit?: number;
-    filters?: Array<{ column: string; op: string; value: any }>;
-    eq?: Record<string, any>;
-  },
+  queryFn: () => Promise<T[]>,
   refetchInterval?: number
 ) {
   return useQuery({
     queryKey: key,
-    queryFn: async () => {
-      let query = supabase.from(tableName).select(options?.select || "*");
-
-      if (options?.eq) {
-        for (const [col, val] of Object.entries(options.eq)) {
-          query = query.eq(col, val);
-        }
-      }
-
-      if (options?.filters) {
-        for (const f of options.filters) {
-          if (f.op === "gte") query = query.gte(f.column, f.value);
-          else if (f.op === "lte") query = query.lte(f.column, f.value);
-          else if (f.op === "neq") query = query.neq(f.column, f.value);
-          else if (f.op === "in") query = query.in(f.column, f.value);
-        }
-      }
-
-      if (options?.orderBy) {
-        query = query.order(options.orderBy.column, {
-          ascending: options.orderBy.ascending ?? false,
-        });
-      }
-
-      if (options?.limit) {
-        query = query.limit(options.limit);
-      }
-
-      const { data, error } = await query;
-      if (error) throw error;
-      return data as T[];
-    },
+    queryFn,
     refetchInterval,
   });
 }
@@ -55,129 +17,135 @@ function useSupabaseQuery<T>(
 // ═══ Specific hooks ═══
 
 export function usePositions(status?: string) {
-  return useSupabaseQuery(
+  return useTableQuery(
     ["positions", status || "all"],
-    "positions",
-    {
-      ...(status ? { eq: { status } } : {}),
-      orderBy: { column: "entry_time", ascending: false },
-      limit: 200,
+    async () => {
+      let q = supabase.from("positions").select("*").order("entry_time", { ascending: false }).limit(200);
+      if (status) q = q.eq("status", status);
+      const { data, error } = await q;
+      if (error) throw error;
+      return data || [];
     },
     30000
   );
 }
 
 export function useSignals(limit = 50) {
-  return useSupabaseQuery(
+  return useTableQuery(
     ["signals", String(limit)],
-    "signals",
-    {
-      orderBy: { column: "timestamp", ascending: false },
-      limit,
+    async () => {
+      const { data, error } = await supabase.from("signals").select("*").order("timestamp", { ascending: false }).limit(limit);
+      if (error) throw error;
+      return data || [];
     },
     15000
   );
 }
 
 export function useOptimizationResults() {
-  return useSupabaseQuery(
+  return useTableQuery(
     ["optimization_results"],
-    "optimization_results",
-    {
-      eq: { is_active: true },
-      orderBy: { column: "test_return", ascending: false },
+    async () => {
+      const { data, error } = await supabase.from("optimization_results").select("*").eq("is_active", true).order("test_return", { ascending: false });
+      if (error) throw error;
+      return data || [];
     },
     60000
   );
 }
 
 export function useAgentLogs(limit = 100) {
-  return useSupabaseQuery(
+  return useTableQuery(
     ["agent_logs", String(limit)],
-    "agent_logs",
-    {
-      orderBy: { column: "timestamp", ascending: false },
-      limit,
+    async () => {
+      const { data, error } = await supabase.from("agent_logs").select("*").order("timestamp", { ascending: false }).limit(limit);
+      if (error) throw error;
+      return data || [];
     },
     30000
   );
 }
 
 export function useAgentMemory() {
-  return useSupabaseQuery(["agent_memory"], "agent_memory", {}, 60000);
+  return useTableQuery(
+    ["agent_memory"],
+    async () => {
+      const { data, error } = await supabase.from("agent_memory").select("*");
+      if (error) throw error;
+      return data || [];
+    },
+    60000
+  );
 }
 
 export function useNewsEvents(limit = 50) {
-  return useSupabaseQuery(
+  return useTableQuery(
     ["news_events", String(limit)],
-    "news_events",
-    {
-      orderBy: { column: "timestamp", ascending: false },
-      limit,
+    async () => {
+      const { data, error } = await supabase.from("news_events").select("*").order("timestamp", { ascending: false }).limit(limit);
+      if (error) throw error;
+      return data || [];
     },
     30000
   );
 }
 
 export function useAIInsights(limit = 30) {
-  return useSupabaseQuery(
+  return useTableQuery(
     ["ai_insights", String(limit)],
-    "ai_insights",
-    {
-      orderBy: { column: "created_at", ascending: false },
-      limit,
+    async () => {
+      const { data, error } = await supabase.from("ai_insights").select("*").order("created_at", { ascending: false }).limit(limit);
+      if (error) throw error;
+      return data || [];
     },
     60000
   );
 }
 
 export function useTrackedSymbols() {
-  return useSupabaseQuery(
+  return useTableQuery(
     ["tracked_symbols"],
-    "tracked_symbols",
-    { eq: { is_active: true } },
+    async () => {
+      const { data, error } = await supabase.from("tracked_symbols").select("*").eq("is_active", true);
+      if (error) throw error;
+      return data || [];
+    },
     60000
   );
 }
 
 export function useAgentFeedback(limit = 50) {
-  return useSupabaseQuery(
+  return useTableQuery(
     ["agent_feedback", String(limit)],
-    "agent_feedback",
-    {
-      orderBy: { column: "close_time", ascending: false },
-      limit,
+    async () => {
+      const { data, error } = await supabase.from("agent_feedback").select("*").order("close_time", { ascending: false }).limit(limit);
+      if (error) throw error;
+      return data || [];
     },
     30000
   );
 }
 
 export function useTradeSummaries() {
-  return useSupabaseQuery(
+  return useTableQuery(
     ["trade_summaries"],
-    "trade_summaries",
-    {
-      orderBy: { column: "period", ascending: false },
-      limit: 12,
+    async () => {
+      const { data, error } = await supabase.from("trade_summaries").select("*").order("period", { ascending: false }).limit(12);
+      if (error) throw error;
+      return data || [];
     },
     300000
   );
 }
 
 export function useTimeframeProfiles() {
-  return useSupabaseQuery(
+  return useTableQuery(
     ["timeframe_profiles"],
-    "timeframe_profiles",
-    {},
+    async () => {
+      const { data, error } = await supabase.from("timeframe_profiles").select("*");
+      if (error) throw error;
+      return data || [];
+    },
     120000
-  );
-}
-
-export function useSP500Symbols() {
-  return useSupabaseQuery(
-    ["sp500_symbols"],
-    "sp500_symbols",
-    { eq: { is_active: true } },
-    300000
   );
 }
