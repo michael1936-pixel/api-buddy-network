@@ -1,40 +1,48 @@
 
+## מה כבר ברור עכשיו
 
-# חיבור שרת Railway ל-Lovable Cloud
+- הדשבורד מחובר ל-backend הנכון: כל הקריאות מה-UI הולכות ל-Lovable Cloud ומחזירות `200`.
+- זו לא בעיית הרשאות: ה-RLS בטבלאות פתוח כרגע, אז הנתונים לא “נחסמים”.
+- ה-frontend כאן הוא **קריאה בלבד**; הוא לא יוצר `signals`, `positions` או `news_events`.
+- יש לפחות כתיבה אחת חיה ל-`agent_memory` (`agent_id = news_research`), לכן החיבור של שרת חיצוני לבסיס הנתונים **כן עובד לפחות חלקית**.
+- רוב הטבלאות עדיין ריקות (`signals`, `positions`, `tracked_symbols`, `optimization_results`, `agent_logs`, `news_events`), ולכן הבעיה היא בצד ה-writer / ה-jobs של Railway, לא בדשבורד עצמו.
+- יש גם mismatch קטן ב-UI: הדשבורד מחפש `newsResearch`, אבל בבסיס הנתונים הגיע `news_research`, אז אפילו נתון תקין לא תמיד יוצג כ-online.
 
-## מה צריך לעשות
+## התוכנית
 
-השרת שלך ב-Railway כבר עובד ומחובר לפרויקט Supabase ישן (`tymaylrydvzcxvgmavvf`). צריך לעדכן 2 משתנים ב-Railway כדי שיצביעו ל-Lovable Cloud החדש (`ckyvvfwpetarfsiqirrf`).
+### 1. לאבחן את הכתיבה מהשרת
+- לבדוק ספירות עדכניות וזמני עדכון בטבלאות המרכזיות.
+- לבדוק לוגי DB כדי לראות אם Railway מנסה לכתוב ונכשל, או שלא מתבצעת כתיבה בכלל.
 
-## השלבים
+### 2. ליישר את בסיס הנתונים עם השרת
+- אם יש שגיאות insert/update, אתקן schema / defaults / nullable לפי ה-payload האמיתי של Railway.
+- אם יתברר שהשרת תלוי ב-`tracked_symbols` והטבלה ריקה, נאתחל אותה מה-`SYMBOLS` שכבר מוגדר ב-Railway.
 
-### שלב 1: קבלת ה-Service Role Key
-הפרויקט של Lovable Cloud כבר מכיל service role key. אני אשלוף את ה-URL וה-key שצריך.
+### 3. לתקן את שכבת התצוגה
+- לנרמל מזהי סוכנים (`news_research` ↔ `newsResearch` וכו׳) כדי שהסטטוס יוצג נכון.
+- להוסיף מסך/כרטיס “בריאות מערכת” עם:
+  - row count לכל טבלה חשובה
+  - זמן נתון אחרון
+  - אינדיקציה האם השרת מזרים נתונים בפועל
 
-- **SUPABASE_URL** החדש: `https://ckyvvfwpetarfsiqirrf.supabase.co`
-- **SUPABASE_SERVICE_KEY** — צריך להעתיק מהגדרות Lovable Cloud (אני אעזור לך למצוא אותו)
+### 4. מה אצטרך ממך
+- צילום של Railway Deploy/Runtime logs אחרי ה-redeploy, או את קוד שרת Railway.
+- בלי זה אפשר לאמת את ה-DB, אבל אי אפשר לתקן את הלוגיקה של השרת מתוך הריפו הזה, כי קוד השרת לא נמצא כאן.
 
-### שלב 2: עדכון משתנים ב-Railway
-ב-Railway dashboard, תחליף את שני המשתנים הבאים:
+## פרטים טכניים
 
-| משתנה | ערך ישן | ערך חדש |
-|---|---|---|
-| `SUPABASE_URL` | `https://tymaylrydvzcxvgmavvf.supabase.co` | `https://ckyvvfwpetarfsiqirrf.supabase.co` |
-| `SUPABASE_SERVICE_KEY` | (הישן) | (של Lovable Cloud) |
+- אין כאן functions/triggers שממלאים טבלאות אוטומטית — כל הנתונים צריכים להגיע מ-Railway או מ-writer חיצוני.
+- העובדה שיש רשומה ב-`agent_memory` אומרת שה-Service Key/URL כנראה לא שגויים לחלוטין.
+- לכן החשד המרכזי הוא אחד מאלה:
+  1. job מסוים ב-Railway לא רץ,
+  2. יש שגיאת כתיבה לטבלאות מסוימות,
+  3. חסר bootstrap ל-`tracked_symbols`,
+  4. או שיש mismatch בין שמות שדות/IDs של השרת לבין הדשבורד.
 
-שאר המשתנים (TWELVE_DATA_API_KEY, TRADERSPOST_WEBHOOK_URL, CLAUDE_API_KEY, FINNHUB_API_KEY, API_KEY, SYMBOLS, PORT, MAX_DAILY_LOSS) **לא צריכים להשתנות** — הם לא קשורים ל-Supabase.
+## תוצאה צפויה
 
-### שלב 3: Redeploy ב-Railway
-אחרי עדכון המשתנים, Railway יעשה redeploy אוטומטי והשרת יתחיל לכתוב נתונים ל-DB החדש.
-
-### שלב 4: אימות
-אני אבדוק שנתונים מתחילים להגיע לטבלאות (signals, positions, agent_logs) דרך query על ה-DB.
-
-## מה אני אעשה בצד שלי
-- אפתח לך גישה ל-Service Role Key דרך Lovable Cloud
-- אוודא שה-DB schema תואם למה שהשרת מצפה (כבר יצרנו 17 טבלאות)
-- אבדוק שנתונים זורמים אחרי החיבור
-
-## הערה חשובה
-הטבלאות ב-Lovable Cloud **כבר נוצרו** עם אותו schema בדיוק כמו בפרויקט הישן, אז השרת אמור לעבוד מיד.
-
+אחרי היישור הזה נדע בוודאות אם הבעיה היא:
+- חיבור חלקי ל-backend,
+- שגיאת insert מול ה-schema,
+- job שלא רץ ב-Railway,
+- או רק בעיית מיפוי/תצוגה בדשבורד.
