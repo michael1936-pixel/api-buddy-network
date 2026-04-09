@@ -1,10 +1,30 @@
-import { useTrackedSymbols } from "@/hooks/use-trading-data";
+import { useTrackedSymbols, useSystemHealth } from "@/hooks/use-trading-data";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Settings as SettingsIcon, Database, Server, Shield } from "lucide-react";
+import { Settings as SettingsIcon, Database, Server, Shield, HeartPulse } from "lucide-react";
+import { StatusDot } from "@/components/trading/StatCard";
 
 export default function SettingsPage() {
   const { data: symbols = [] } = useTrackedSymbols();
+  const { data: health = [] } = useSystemHealth();
+
+  const formatAgo = (ts: string | null) => {
+    if (!ts) return "אף פעם";
+    const diff = Date.now() - new Date(ts).getTime();
+    const mins = Math.floor(diff / 60000);
+    if (mins < 1) return "עכשיו";
+    if (mins < 60) return `לפני ${mins} דק׳`;
+    const hrs = Math.floor(mins / 60);
+    if (hrs < 24) return `לפני ${hrs} שע׳`;
+    return `לפני ${Math.floor(hrs / 24)} ימים`;
+  };
+
+  const TABLE_LABELS: Record<string, string> = {
+    signals: "סיגנלים", positions: "פוזיציות", agent_logs: "לוגי סוכנים",
+    agent_memory: "זיכרון סוכנים", news_events: "אירועי חדשות", market_data: "נתוני שוק",
+    optimization_results: "אופטימיזציה", ai_insights: "תובנות AI", tracked_symbols: "מניות במעקב",
+    agent_feedback: "משוב סוכנים", trade_summaries: "סיכומי עסקאות",
+  };
 
   return (
     <div className="space-y-6">
