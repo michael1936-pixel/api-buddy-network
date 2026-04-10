@@ -78,6 +78,25 @@ export function useAgentMemory() {
   );
 }
 
+export function useNewsEventsLive(limit = 50) {
+  return useQuery({
+    queryKey: ["news_events_live", String(limit)],
+    queryFn: async () => {
+      try {
+        const { data, error } = await supabase.functions.invoke("fetch-news");
+        if (error) throw error;
+        return (data?.news || []).slice(0, limit);
+      } catch (e) {
+        console.warn("News edge function failed, falling back to DB:", e);
+        const { data, error } = await supabase.from("news_events").select("*").order("timestamp", { ascending: false }).limit(limit);
+        if (error) throw error;
+        return data || [];
+      }
+    },
+    refetchInterval: 60000,
+  });
+}
+
 export function useNewsEvents(limit = 50) {
   return useTableQuery(
     ["news_events", String(limit)],
@@ -172,6 +191,34 @@ export function useWeeklyReviews() {
     },
     300000
   );
+}
+
+export function useMarketDataLive() {
+  return useQuery({
+    queryKey: ["market_data_live"],
+    queryFn: async () => {
+      try {
+        const { data, error } = await supabase.functions.invoke("fetch-market-data");
+        if (error) throw error;
+        return data as Record<string, any>;
+      } catch (e) {
+        console.warn("Edge function failed, falling back to DB:", e);
+        const { data, error } = await supabase
+          .from("market_data")
+          .select("*")
+          .in("symbol", ["SPY", "VIX"])
+          .order("timestamp", { ascending: false })
+          .limit(4);
+        if (error) throw error;
+        const result: Record<string, any> = {};
+        for (const row of data || []) {
+          if (!result[row.symbol]) result[row.symbol] = row;
+        }
+        return result;
+      }
+    },
+    refetchInterval: 30000,
+  });
 }
 
 export function useMarketData(symbol: string) {
