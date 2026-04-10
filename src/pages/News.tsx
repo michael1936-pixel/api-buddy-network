@@ -231,7 +231,7 @@ export default function NewsPage() {
               : e.impact_level === "medium" ? "hsl(var(--trading-warning))" : "hsl(var(--muted-foreground))";
             const ts = e.timestamp ? new Date(e.timestamp).toLocaleString("he-IL", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) : "";
             return (
-              <div key={e.id} className="row-item items-start py-3 px-[18px]">
+              <div key={e.id || e.event_id} className="row-item items-start py-3 px-[18px]">
                 <span className="text-base mt-0.5">{sentimentIcons[e.sentiment] || "⚪"}</span>
                 <div className="flex-1 min-w-0">
                   <div className="text-xs font-semibold leading-relaxed">{e.headline || e.summary || "--"}</div>
