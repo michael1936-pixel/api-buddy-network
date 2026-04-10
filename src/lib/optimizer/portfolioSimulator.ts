@@ -1,4 +1,4 @@
-import { SymbolData, PeriodSplit, ExtendedStocksStrategyParameters, PortfolioBacktestResult, MonthlyPerformance } from './types';
+import type { SymbolData, PeriodSplit, ExtendedStocksStrategyParameters, PortfolioBacktestResult, MonthlyPerformance } from './types';
 
 export function runPortfolioBacktest(
   _symbolsData: SymbolData[],
