@@ -22,8 +22,8 @@ Deno.serve(async (req) => {
 
     const results: Record<string, any> = {}
 
-    // SPY + VIXY (VIX ETF proxy) from Twelve Data in one call
-    const symbols = ['SPY', 'VIXY']
+    // SPY + VIXY + VIX from Twelve Data in one call
+    const symbols = ['SPY', 'VIXY', 'VIX']
     const url = `https://api.twelvedata.com/time_series?symbol=${symbols.join(',')}&interval=1min&outputsize=2&apikey=${TWELVE_DATA_KEY}`
     const resp = await fetch(url)
     const rawData = await resp.json()
@@ -44,8 +44,8 @@ Deno.serve(async (req) => {
       }
     }
 
-    // Get VIX from DB (Railway server writes it)
-    if (SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY) {
+    // Fallback: if VIX failed from Twelve Data, try DB
+    if (results.VIX?.error && SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY) {
       const sb = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
       const { data: vixRows } = await sb.from('market_data')
         .select('*').eq('symbol', 'VIX')
@@ -59,17 +59,22 @@ Deno.serve(async (req) => {
           timestamp: latest.timestamp, prev_close: prev.close,
         }
       }
+    }
 
-      // Save SPY to DB
-      const spyR = results.SPY
-      if (spyR && !spyR.error) {
-        await sb.from('market_data').insert({
-          symbol: 'SPY', open: spyR.open, high: spyR.high,
-          low: spyR.low, close: spyR.close, volume: spyR.volume,
-          timestamp: new Date(spyR.timestamp).toISOString(), interval: '1min',
-        }).then(({ error }) => {
-          if (error) console.error('DB insert error for SPY:', error.message)
-        })
+    // Save SPY + VIX to DB
+    if (SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY) {
+      const sb = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
+      for (const sym of ['SPY', 'VIX']) {
+        const r = results[sym]
+        if (r && !r.error) {
+          await sb.from('market_data').insert({
+            symbol: sym, open: r.open, high: r.high,
+            low: r.low, close: r.close, volume: r.volume,
+            timestamp: new Date(r.timestamp).toISOString(), interval: '1min',
+          }).then(({ error }) => {
+            if (error) console.error(`DB insert error for ${sym}:`, error.message)
+          })
+        }
       }
     }
 
