@@ -108,6 +108,12 @@ export interface Trade {
   netReturnPct?: number;
 }
 
+export interface S2SignalRecord {
+  time_ms: number;
+  close: number;
+  barIndex: number;
+}
+
 export interface BacktestResult {
   parameters: StrategyParameters;
   totalReturn: number;
@@ -125,6 +131,9 @@ export interface BacktestResult {
   avgLoss: number;
   totalFeesUsd: number;
   trades: Trade[];
+  s2SellSignals?: S2SignalRecord[];
+  s2ShortBaseSignals?: S2SignalRecord[];
+  s2CanEnterShortSignals?: S2SignalRecord[];
 }
 
 export interface ParameterRange {
@@ -381,5 +390,50 @@ export interface MultiObjectiveResult {
     profit?: ConsistencyMetrics;
     consistency?: ConsistencyMetrics;
     lowDrawdown?: ConsistencyMetrics;
+  };
+}
+
+export type StageStatusType = 'pending' | 'running' | 'completed' | 'skipped';
+
+export interface StageStatusInfo {
+  stageNumber: number;
+  stageName: string;
+  status: StageStatusType;
+  startTime?: number;
+  endTime?: number;
+  elapsedTime?: number;
+  skipReason?: string;
+}
+
+export interface SmartProgressInfo {
+  currentStage: number;
+  totalStages: number;
+  stageName: string;
+  stageDescription: string;
+  currentRound: number;
+  current: number;
+  total: number;
+  stageProgress?: {
+    current: number;
+    total: number;
+    percent: number;
+  };
+  overallProgress?: {
+    current: number;
+    total: number;
+    percent: number;
+  };
+  globalBestTrainReturn?: number;
+  globalBestTestReturn?: number;
+  stageCombinations?: number;
+  skippedCombinations?: number;
+  stageEstimatedTimeRemaining?: number;
+  stageElapsedTime?: number;
+}
+
+export interface StageProgressMap {
+  [stageNumber: number]: {
+    current: number;
+    total: number;
   };
 }
