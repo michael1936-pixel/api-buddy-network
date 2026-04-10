@@ -5,7 +5,6 @@ const corsHeaders = {
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.49.1'
 
 const TWELVE_DATA_KEY = Deno.env.get('TWELVE_DATA_API_KEY') || ''
-const FINNHUB_KEY = Deno.env.get('FINNHUB_API_KEY') || ''
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL') || ''
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || ''
 
@@ -22,27 +21,15 @@ Deno.serve(async (req) => {
     }
 
     const results: Record<string, any> = {}
-    const fetchedFromApi = new Set<string>()
 
     // SPY + VIXY from Twelve Data
-    const mainSymbols = ['SPY', 'VIXY']
-    const mainUrl = `https://api.twelvedata.com/time_series?symbol=${mainSymbols.join(',')}&interval=1min&outputsize=2&apikey=${TWELVE_DATA_KEY}`
+    const symbols = ['SPY', 'VIXY']
+    const url = `https://api.twelvedata.com/time_series?symbol=${symbols.join(',')}&interval=1min&outputsize=2&apikey=${TWELVE_DATA_KEY}`
+    const resp = await fetch(url)
+    const rawData = await resp.json()
 
-    // VIX quote from Finnhub (real-time CBOE VIX)
-    const vixQuoteUrl = FINNHUB_KEY
-      ? `https://finnhub.io/api/v1/quote?symbol=^VIX&token=${FINNHUB_KEY}`
-      : null
-
-    const fetches: Promise<Response>[] = [fetch(mainUrl)]
-    if (vixQuoteUrl) fetches.push(fetch(vixQuoteUrl))
-
-    const responses = await Promise.all(fetches)
-    const mainData = await responses[0].json()
-    const vixQuote = responses.length > 1 ? await responses[1].json() : null
-
-    // Parse SPY + VIXY
-    for (const sym of mainSymbols) {
-      const data = mainSymbols.length > 1 ? mainData[sym] : mainData
+    for (const sym of symbols) {
+      const data = symbols.length > 1 ? rawData[sym] : rawData
       if (!data || data.status === 'error' || !data.values?.length) {
         results[sym] = { error: data?.message || 'No data' }
         continue
@@ -55,28 +42,11 @@ Deno.serve(async (req) => {
         volume: parseInt(latest.volume || '0'), timestamp: latest.datetime,
         prev_close: parseFloat(prev.close),
       }
-      fetchedFromApi.add(sym)
     }
 
-    // Parse VIX from Finnhub quote
-    if (vixQuote && vixQuote.c && vixQuote.c > 0) {
-      results.VIX = {
-        symbol: 'VIX',
-        open: vixQuote.o || vixQuote.c,
-        high: vixQuote.h || vixQuote.c,
-        low: vixQuote.l || vixQuote.c,
-        close: vixQuote.c,
-        volume: 0,
-        timestamp: new Date(vixQuote.t * 1000).toISOString(),
-        prev_close: vixQuote.pc || vixQuote.c,
-      }
-      fetchedFromApi.add('VIX')
-    } else {
-      console.warn('VIX from Finnhub failed:', JSON.stringify(vixQuote))
-    }
-
-    // Fallback: if VIX failed, try DB
-    if (!fetchedFromApi.has('VIX') && SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY) {
+    // Try to get real VIX from DB (written by Railway server)
+    let vixFromDb = false
+    if (SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY) {
       const sb = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
       const { data: vixRows } = await sb.from('market_data')
         .select('*').eq('symbol', 'VIX')
@@ -84,28 +54,39 @@ Deno.serve(async (req) => {
       if (vixRows && vixRows.length > 0) {
         const latest = vixRows[0]
         const prev = vixRows[1] || latest
-        results.VIX = {
-          symbol: 'VIX', open: latest.open, high: latest.high,
-          low: latest.low, close: latest.close, volume: latest.volume,
-          timestamp: latest.timestamp, prev_close: prev.close,
-          source: 'db_fallback',
+        const ageMs = Date.now() - new Date(latest.timestamp).getTime()
+        // Use DB VIX if it's less than 10 minutes old
+        if (ageMs < 10 * 60 * 1000) {
+          results.VIX = {
+            symbol: 'VIX', open: latest.open, high: latest.high,
+            low: latest.low, close: latest.close, volume: latest.volume,
+            timestamp: latest.timestamp, prev_close: prev.close,
+            source: 'db',
+          }
+          vixFromDb = true
         }
       }
-    }
 
-    // Save API-fetched SPY to DB
-    if (SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY && fetchedFromApi.has('SPY')) {
-      const sb = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
-      const r = results.SPY
-      if (r && !r.error) {
+      // Save SPY to DB
+      const spyR = results.SPY
+      if (spyR && !spyR.error) {
         await sb.from('market_data').upsert({
-          symbol: 'SPY', open: r.open, high: r.high,
-          low: r.low, close: r.close, volume: r.volume,
-          timestamp: new Date(r.timestamp).toISOString(), interval: '1min',
+          symbol: 'SPY', open: spyR.open, high: spyR.high,
+          low: spyR.low, close: spyR.close, volume: spyR.volume,
+          timestamp: new Date(spyR.timestamp).toISOString(), interval: '1min',
         }, { onConflict: 'symbol,interval,timestamp', ignoreDuplicates: true })
           .then(({ error }) => {
             if (error) console.error('DB upsert error for SPY:', error.message)
           })
+      }
+    }
+
+    // Fallback: use VIXY as VIX proxy if no DB data
+    if (!vixFromDb && results.VIXY && !results.VIXY.error) {
+      results.VIX = {
+        ...results.VIXY,
+        symbol: 'VIX',
+        source: 'vixy_proxy',
       }
     }
 
