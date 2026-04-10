@@ -1,7 +1,7 @@
 import { ReactNode, useState, useEffect, useMemo } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { cn } from "@/lib/utils";
-import { useMarketDataLive } from "@/hooks/use-trading-data";
+import { useMarketDataWebSocket } from "@/hooks/useMarketDataWebSocket";
 
 const navItems = [
   { to: "/", label: "סקירה" },
@@ -16,7 +16,7 @@ const navItems = [
 
 export default function AppLayout({ children }: { children: ReactNode }) {
   const location = useLocation();
-  const { data: marketData } = useMarketDataLive();
+  const { data: marketData, isRealtime } = useMarketDataWebSocket();
   const [clock, setClock] = useState("");
 
   useEffect(() => {
@@ -85,7 +85,7 @@ export default function AppLayout({ children }: { children: ReactNode }) {
               שוק: {isMarketOpen ? "פתוח" : "סגור"}
             </span>
             <span className="text-muted-foreground/50">·</span>
-            <span className="text-trading-profit">זמן אמת</span>
+            <span className={isRealtime ? "text-trading-profit" : "text-trading-warning"}>{isRealtime ? "⚡ זמן אמת" : "🔄 REST"}</span>
             <span className="text-muted-foreground/50">·</span>
             <span className="font-mono text-muted-foreground/70">{clock}</span>
           </div>

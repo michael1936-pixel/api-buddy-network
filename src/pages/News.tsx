@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { useNewsAnalysis, useMarketDataLive } from "@/hooks/use-trading-data";
+import { useNewsAnalysis } from "@/hooks/use-trading-data";
+import { useMarketDataWebSocket } from "@/hooks/useMarketDataWebSocket";
 
 const impactLabels: Record<string, string> = { critical: "קריטי", high: "גבוה", medium: "בינוני", low: "נמוך", noise: "רעש", major: "משמעותי", moderate: "בינוני", minor: "קטן", none: "אפסי" };
 const sentimentIcons: Record<string, string> = { very_negative: "🔴", negative: "🟠", neutral: "⚪", positive: "🟢", very_positive: "💚", bullish: "🟢", bearish: "🔴" };
@@ -52,7 +53,7 @@ function getSentimentColor(score: number | null): string {
 
 export default function NewsPage() {
   const { data: analysisData } = useNewsAnalysis(100);
-  const { data: liveMarket = {} } = useMarketDataLive();
+  const { data: liveMarket = {}, wsStatus, isRealtime } = useMarketDataWebSocket();
   const [expandedId, setExpandedId] = useState<number | null>(null);
 
   const news = (analysisData?.news || []) as any[];
