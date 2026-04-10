@@ -1,38 +1,33 @@
 
 
-# המשך העתקת מנוע האופטימיזציה — שלב 2
+# חיבור נתוני שוק בזמן אמת לסרגל העליון
 
-## מצב נוכחי
-5 מתוך 19 קבצי ליבה הועתקו, רובם stubs ריקים. צריך להעתיק את הקוד האמיתי.
+## הבעיה
+הנתונים מגיעים מ-`fetch-market-data` בהצלחה (SPY: 681.22, VIX: 18.98), אבל בסרגל העליון (`AppLayout.tsx`) הערכים hardcoded כ-`--`.
 
-## שלב 2א: העתקת קבצי הליבה (הקוד האמיתי)
-העתקה ישירה מהפרויקט השני באמצעות `cross_project` tools:
+שורות 59, 63:
+```
+<span className="font-mono text-trading-profit">VIX --</span>
+<span className="text-muted-foreground">שוק: --</span>
+```
 
-1. **indicators.ts** — RSI, EMA, ATR, BB, ADX (~429 שורות)
-2. **simulatorV2.ts** — מנוע סימולציה (~2,171 שורות)
-3. **strategies.ts** — לוגיקת 5 אסטרטגיות
-4. **strategyEngine.ts** — מנוע אסטרטגיות
-5. **smartOptimizer.ts** — אופטימיזציה רב-שלבית (~496 שורות)
-6. **portfolioOptimizer.ts** — אופטימיזציית פורטפוליו
-7. **portfolioSimulator.ts** — החלפת ה-stub בקוד אמיתי
-8. **multiObjectiveMetrics.ts** — מטריקות מתקדמות
-9. **presetConfigs.ts** — הגדרות ברירת מחדל
-10. **stageUtils.ts** — עזרים לשלבים
-11. **csvParser.ts** — פרסור נתונים
-12. **utils.ts** — פונקציות עזר
-13. **types.ts** — החלפה בגרסה המלאה מהפרויקט השני
-14. **strategyCombinationOptimizer.ts** — אופטימיזציה משולבת
+## הפתרון
+קובץ אחד לעדכון: `src/components/AppLayout.tsx`
 
-## שלב 2ב: Worker + Hook
-- העתקת `optimizer.worker.ts` → `src/workers/optimizer.worker.ts`
-- העתקת hook ל-`src/hooks/useOptimizationWorker.ts`
+1. ייבוא `useMarketDataLive` מ-`use-trading-data`
+2. שליפת נתוני SPY ו-VIX מה-hook
+3. הצגת VIX עם צבע דינמי (ירוק מתחת ל-20, אדום מעל 25)
+4. הצגת מצב שוק: "פתוח" / "סגור" לפי שעות מסחר NYSE (14:30-21:00 UTC)
+5. הצגת מחיר SPY נוכחי
+6. צבע ירוק אם SPY עולה, אדום אם יורד
 
-## שלב 2ג: תיקון imports
-- עדכון כל ה-imports מ-`@/lib/` ל-`@/lib/optimizer/` או `./`
-- וידוא שאין תלויות שבורות
+## תצוגה צפויה בסרגל
+```
+VIX 18.98 · SPY 681.22 ↑ · שוק: פתוח · זמן אמת · 17:20:37
+```
 
-## הערה
-זה שלב גדול (~6,000+ שורות קוד). אעשה את זה בכמה צעדים — קודם indicators + simulator + strategies, אח"כ optimizer + portfolio, ולבסוף worker + hook.
-
-קומפוננטות UI ודף Backtest — בשלב הבא.
+## פרטים טכניים
+- `useMarketDataLive()` כבר קיים ב-`use-trading-data.ts` עם `refetchInterval: 30000`
+- ה-response מחזיר `{ SPY: { close, prev_close }, VIX: { close, prev_close } }`
+- חישוב שינוי: `((close - prev_close) / prev_close * 100).toFixed(2)`
 
