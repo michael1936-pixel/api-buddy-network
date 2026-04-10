@@ -4,6 +4,7 @@ import { Toaster as Sonner } from "@/components/ui/sonner";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import AppLayout from "@/components/AppLayout";
+import { MarketDataProvider } from "@/contexts/MarketDataContext";
 import Index from "./pages/Index";
 import Agents from "./pages/Agents";
 import Pipeline from "./pages/Pipeline";
@@ -22,6 +23,7 @@ const App = () => (
       <Toaster />
       <Sonner />
       <BrowserRouter>
+        <MarketDataProvider>
         <AppLayout>
           <Routes>
             <Route path="/" element={<Index />} />
@@ -35,6 +37,7 @@ const App = () => (
             <Route path="*" element={<NotFound />} />
           </Routes>
         </AppLayout>
+        </MarketDataProvider>
       </BrowserRouter>
     </TooltipProvider>
   </QueryClientProvider>
