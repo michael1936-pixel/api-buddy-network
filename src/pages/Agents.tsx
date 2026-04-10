@@ -3,29 +3,47 @@ import { useAgentMemory, useAgentFeedback } from "@/hooks/use-trading-data";
 import { cn } from "@/lib/utils";
 
 const AGENTS = [
-  { id: "murphy", name: "כללי מרפי", cat: "ניתוח", color: "#4d8df7", icon: "📐" },
-  { id: "claude", name: "אנליסט Claude", cat: "ניתוח", color: "#4d8df7", icon: "🧠" },
-  { id: "knowledge", name: "מנוע ידע", cat: "ניתוח", color: "#4d8df7", icon: "📚" },
-  { id: "router", name: "נתב ידע", cat: "ניתוח", color: "#4d8df7", icon: "🗺️" },
-  { id: "deception", name: "גלאי שקרים", cat: "ניתוח", color: "#4d8df7", icon: "🔍" },
-  { id: "psychology", name: "סוכן פסיכולוגי", cat: "הגנה", color: "#f87171", icon: "🧘" },
-  { id: "devils", name: "מבקר (Devil)", cat: "הגנה", color: "#f87171", icon: "😈" },
-  { id: "correlation", name: "סוכן מתאם", cat: "הגנה", color: "#f87171", icon: "🔗" },
-  { id: "liquidity", name: "שומר נזילות", cat: "הגנה", color: "#f87171", icon: "💧" },
-  { id: "news", name: "מודיעין חדשות", cat: "מודיעין", color: "#a78bfa", icon: "📰" },
-  { id: "vix", name: "מוניטור VIX", cat: "מודיעין", color: "#a78bfa", icon: "📊" },
-  { id: "market", name: "הקשר שוק", cat: "מודיעין", color: "#a78bfa", icon: "🌍" },
-  { id: "sector", name: "רוטציית סקטורים", cat: "מודיעין", color: "#a78bfa", icon: "🔄" },
-  { id: "scanner", name: "סורק יקום", cat: "אופטימיזציה", color: "#22d3ee", icon: "🔭" },
-  { id: "timeframe", name: "אופטימייזר TF", cat: "אופטימיזציה", color: "#22d3ee", icon: "⏱️" },
-  { id: "backtest", name: "מדע בקטסט", cat: "אופטימיזציה", color: "#22d3ee", icon: "🔬" },
-  { id: "ceo", name: 'סוכן מנכ"ל', cat: "ניהול", color: "#fbbf24", icon: "👔" },
-  { id: "supervisor", name: "מפקח", cat: "ניהול", color: "#fbbf24", icon: "🎯" },
-  { id: "improve", name: "שיפור עצמי", cat: "ניהול", color: "#fbbf24", icon: "📈" },
-  { id: "health", name: "מוניטור בריאות", cat: "תפעול", color: "#34d399", icon: "💚" },
-  { id: "anomaly", name: "גלאי חריגות", cat: "תפעול", color: "#34d399", icon: "⚠️" },
-  { id: "validator", name: "מאמת בקטסט", cat: "תפעול", color: "#34d399", icon: "✅" },
-  { id: "memory", name: "מנהל זיכרון", cat: "תפעול", color: "#34d399", icon: "💾" },
+  // ניתוח (Analysis)
+  { id: "murphy", name: "כללי מרפי", cat: "ניתוח", color: "#4d8df7", icon: "📐", desc: "מיישם חוקי Murphy של ניתוח טכני — trend, volume, momentum" },
+  { id: "deception", name: "גלאי שקרים", cat: "ניתוח", color: "#4d8df7", icon: "🔍", desc: "מזהה מלכודות שוק: false breakouts, bull/bear traps" },
+  { id: "news", name: "מודיעין חדשות", cat: "ניתוח", color: "#4d8df7", icon: "📰", desc: "מסווג חדשות לפי impact ומחליט אם לעצור מסחר" },
+  { id: "newsResearch", name: "מנוע מחקר חדשות", cat: "ניתוח", color: "#4d8df7", icon: "🔬", desc: "חוקר חדשות היסטוריות ובונה מאגר דפוסים" },
+
+  // הגנה (Protection)
+  { id: "vix", name: "מוניטור VIX", cat: "הגנה", color: "#f87171", icon: "📊", desc: "מעקב VIX בזמן אמת — 5 משטרי שוק" },
+  { id: "liquidity", name: "שומר נזילות", cat: "הגנה", color: "#f87171", icon: "💧", desc: "בודק נפח מסחר מינימלי לפני כניסה" },
+  { id: "anomaly", name: "גלאי חריגות", cat: "הגנה", color: "#f87171", icon: "⚠️", desc: "מזהה gaps, volume spikes, trading halts" },
+  { id: "psychology", name: "סוכן פסיכולוגי", cat: "הגנה", color: "#f87171", icon: "🧘", desc: "מנהל cooldown אחרי הפסדים, מונע revenge trading" },
+  { id: "correlation", name: "סוכן מתאם", cat: "הגנה", color: "#f87171", icon: "🔗", desc: "מונע over-exposure לסקטור אחד" },
+  { id: "sector", name: "רוטציית סקטורים", cat: "הגנה", color: "#f87171", icon: "🔄", desc: "עוקב אחרי זרימת כסף בין סקטורים" },
+
+  // מודיעין (Intelligence)
+  { id: "aiBrain", name: "AI Brain (Claude)", cat: "מודיעין", color: "#a78bfa", icon: "🧠", desc: "המוח — ניתוח עמוק, סקירה שבועית, גילוי דפוסים" },
+  { id: "strategyResearch", name: "חוקר אסטרטגיות", cat: "מודיעין", color: "#a78bfa", icon: "📚", desc: "חוקר אסטרטגיות חדשות מספרות ומחקרים" },
+  { id: "knowledgeRouter", name: "נתב ידע", cat: "מודיעין", color: "#a78bfa", icon: "🗺️", desc: "מנתב שאלות בין סוכנים לפי תחום" },
+  { id: "devilsAdvocate", name: "מבקר (Devil)", cat: "מודיעין", color: "#a78bfa", icon: "😈", desc: "מתנגד לכל החלטה — 8 סוגי התנגדויות" },
+  { id: "newsImpact", name: "סוכן השפעת חדשות", cat: "מודיעין", color: "#a78bfa", icon: "💥", desc: "מודד תגובת שוק לאירועים ומעדכן impact weights" },
+
+  // אופטימיזציה (Optimization)
+  { id: "autoOptimizer", name: "אופטימייזר אוטומטי", cat: "אופטימיזציה", color: "#22d3ee", icon: "🔧", desc: "סורק S&P 500 ומריץ אופטימיזציה אוטומטית" },
+  { id: "smartOptimizer", name: "אופטימייזר חכם", cat: "אופטימיזציה", color: "#22d3ee", icon: "⚡", desc: "מנוע 3-שלבי: discovery → refinement → final tuning" },
+  { id: "splitAgent", name: "Train/Test Split", cat: "אופטימיזציה", color: "#22d3ee", icon: "✂️", desc: "מחליט על חלוקת train/test למניעת overfitting" },
+  { id: "thresholdAgent", name: "ספי מעבר", cat: "אופטימיזציה", color: "#22d3ee", icon: "📏", desc: "קובע ספי מינימום לתוצאות אופטימיזציה" },
+  { id: "backtestValidator", name: "מאמת בקטסט", cat: "אופטימיזציה", color: "#22d3ee", icon: "✅", desc: "Walk-forward validation + Monte Carlo + stability" },
+  { id: "optIntel", name: "מודיעין אופטימיזציה", cat: "אופטימיזציה", color: "#22d3ee", icon: "🎯", desc: "AI review + Walk-Forward + Monte Carlo + Regime Analysis" },
+
+  // ניהול (Management)
+  { id: "ceo", name: 'סוכן מנכ"ל', cat: "ניהול", color: "#fbbf24", icon: "👔", desc: "מחליט על risk appetite ומספר פוזיציות לפי תנאי שוק" },
+  { id: "supervisor", name: "מפקח", cat: "ניהול", color: "#fbbf24", icon: "🎯", desc: "מקבל החלטה סופית לפי מאזן קולות סוכנים" },
+  { id: "portfolioOptimizer", name: "מאפטם תיק", cat: "ניהול", color: "#fbbf24", icon: "💼", desc: "מאפטם הקצאת תיק — equal-risk weighting" },
+  { id: "tradeCoordinator", name: "מתאם עסקאות", cat: "ניהול", color: "#fbbf24", icon: "🎬", desc: "מנהל את כל מחזור חיי העסקה — כניסה עד יציאה" },
+
+  // תפעול (Operations)
+  { id: "learningAdapter", name: "אדפטר למידה", cat: "תפעול", color: "#34d399", icon: "📈", desc: "מנגנון למידה מרכזי — accuracy, calibration, thresholds" },
+  { id: "health", name: "מוניטור בריאות", cat: "תפעול", color: "#34d399", icon: "💚", desc: "בודק APIs, DB, services ושולח התראות" },
+  { id: "memory", name: "מנהל זיכרון", cat: "תפעול", color: "#34d399", icon: "💾", desc: "שומר ומשחזר state של כל הסוכנים" },
+  { id: "selfImprove", name: "שיפור עצמי", cat: "תפעול", color: "#34d399", icon: "🔄", desc: "מזהה הזדמנויות שיפור ומציע fixes" },
+  { id: "feedbackLoop", name: "לולאת משוב", cat: "תפעול", color: "#34d399", icon: "🔁", desc: "אוסף feedback מעסקאות ומעדכן סוכנים" },
 ];
 
 const CATEGORIES = ["ניתוח", "הגנה", "מודיעין", "אופטימיזציה", "ניהול", "תפעול"];
@@ -59,11 +77,101 @@ function formatStateValue(val: any): string {
   return String(val);
 }
 
+// Agent-specific state renderers for richer display
+function renderAgentState(agentId: string, state: Record<string, any>) {
+  switch (agentId) {
+    case "newsResearch":
+    case "news_research":
+      return (
+        <div className="space-y-2">
+          {state.totalPatterns != null && (
+            <div className="flex gap-2 items-center">
+              <span className="font-mono text-primary">דפוסים:</span>
+              <span className="font-mono font-bold text-lg">{state.totalPatterns}</span>
+            </div>
+          )}
+          {state.lastResearch && (
+            <div className="text-[11px] text-muted-foreground">
+              מחקר אחרון: {new Date(state.lastResearch).toLocaleString("he-IL")}
+            </div>
+          )}
+          {state.conclusions && typeof state.conclusions === "object" && Object.keys(state.conclusions).length > 0 && (
+            <div className="space-y-1">
+              <span className="text-[11px] font-semibold text-muted-foreground">מסקנות:</span>
+              {Object.entries(state.conclusions).map(([k, v]) => (
+                <div key={k} className="text-[11px] flex gap-2 pr-2">
+                  <span className="font-mono text-primary">{k}:</span>
+                  <span className="text-muted-foreground">{formatStateValue(v)}</span>
+                </div>
+              ))}
+            </div>
+          )}
+          {state.patterns && Array.isArray(state.patterns) && state.patterns.length > 0 && (
+            <div className="text-[11px] text-muted-foreground">{state.patterns.length} דפוסים שמורים</div>
+          )}
+        </div>
+      );
+
+    case "strategyResearch":
+    case "strategy_researcher":
+      return (
+        <div className="space-y-2">
+          {state.researchIdeas && Array.isArray(state.researchIdeas) && (
+            <div className="flex gap-2 items-center">
+              <span className="font-mono text-primary">רעיונות:</span>
+              <span className="font-mono font-bold">{state.researchIdeas.length}</span>
+            </div>
+          )}
+          {state.researchFocus && typeof state.researchFocus === "object" && (
+            <div className="space-y-1">
+              <span className="text-[11px] font-semibold text-muted-foreground">מיקוד מחקר:</span>
+              {Object.entries(state.researchFocus).map(([k, v]) => (
+                <div key={k} className="text-[11px] flex gap-2 pr-2">
+                  <span className="font-mono text-primary">{k}:</span>
+                  <span className="text-muted-foreground">{formatStateValue(v)}</span>
+                </div>
+              ))}
+            </div>
+          )}
+          {/* Fallback to generic */}
+          {!state.researchIdeas && !state.researchFocus && renderGenericState(state)}
+        </div>
+      );
+
+    default:
+      return renderGenericState(state);
+  }
+}
+
+function renderGenericState(state: Record<string, any>) {
+  return (
+    <div className="space-y-1.5">
+      {Object.entries(state).slice(0, 20).map(([k, v]) => (
+        <div key={k} className="flex gap-2">
+          <span className="font-mono text-primary shrink-0">{k}:</span>
+          <span className="text-muted-foreground break-all">{formatStateValue(v)}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export default function AgentsPage() {
   const { data: agentMemory = [] } = useAgentMemory();
   const { data: feedback = [] } = useAgentFeedback(200);
   const [selectedAgent, setSelectedAgent] = useState<string | null>(null);
-  const memoryMap = new Map(agentMemory.map((m: any) => [m.agent_id, m]));
+
+  // Map both exact IDs and snake_case variants (server may write news_research or newsResearch)
+  const memoryMap = new Map<string, any>();
+  agentMemory.forEach((m: any) => {
+    memoryMap.set(m.agent_id, m);
+    // Also map camelCase variant if agent_id uses underscores
+    const camel = m.agent_id.replace(/_([a-z])/g, (_: string, c: string) => c.toUpperCase());
+    if (camel !== m.agent_id) memoryMap.set(camel, m);
+    // And map underscore variant if agent_id uses camelCase
+    const snake = m.agent_id.replace(/([A-Z])/g, '_$1').toLowerCase();
+    if (snake !== m.agent_id) memoryMap.set(snake, m);
+  });
 
   const selected = AGENTS.find((a) => a.id === selectedAgent);
   const selectedMem = selectedAgent ? memoryMap.get(selectedAgent) : null;
@@ -121,6 +229,7 @@ export default function AgentsPage() {
             <div>
               <div className="text-base font-bold">{selected.name}</div>
               <div className="text-[11px] text-muted-foreground">{selected.cat} | ID: {selected.id}</div>
+              <div className="text-[11px] text-muted-foreground mt-0.5">{selected.desc}</div>
             </div>
             <button className="mr-auto text-xs text-muted-foreground hover:text-foreground" onClick={() => setSelectedAgent(null)}>✕ סגור</button>
           </div>
@@ -153,13 +262,8 @@ export default function AgentsPage() {
               <div className="text-xs font-semibold mb-2 text-muted-foreground">
                 🧠 State (v{selectedMem.version || 1}) — עדכון: {selectedMem.updated_at ? new Date(selectedMem.updated_at).toLocaleString("he-IL") : "--"}
               </div>
-              <div className="rounded-lg p-3 text-xs space-y-1.5" style={{ background: "hsl(var(--surface2))" }}>
-                {Object.entries(selectedMem.state as Record<string, any>).slice(0, 20).map(([k, v]) => (
-                  <div key={k} className="flex gap-2">
-                    <span className="font-mono text-primary shrink-0">{k}:</span>
-                    <span className="text-muted-foreground break-all">{formatStateValue(v)}</span>
-                  </div>
-                ))}
+              <div className="rounded-lg p-3 text-xs" style={{ background: "hsl(var(--surface2))" }}>
+                {renderAgentState(selected.id, selectedMem.state as Record<string, any>)}
               </div>
             </div>
           ) : (
