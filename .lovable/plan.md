@@ -1,64 +1,38 @@
 
 
-# צירוף מנוע האופטימיזציה מהפרויקט השני
+# המשך העתקת מנוע האופטימיזציה — שלב 2
 
 ## מצב נוכחי
-הפרויקט **Real-Time Trading Insights** מכיל מנוע אופטימיזציה מלא עם:
-- **סימולטור** (`simulatorV2.ts`) — 2,171 שורות, 5 אסטרטגיות מסחר
-- **אינדיקטורים** (`indicators.ts`) — 429 שורות (RSI, EMA, ATR, BB, ADX)
-- **אופטימייזר חכם** (`smartOptimizer.ts`) — 496 שורות, רב-שלבי עם 3 סבבים
-- **Web Worker** — מריץ backtests במקביל ללא חסימת UI
-- **טיפוסים** (`types.ts`) — 639 שורות, Candle, Trade, BacktestResult, ParameterRange
-- עוד ~15 קבצי lib ו-17 קומפוננטות UI
+5 מתוך 19 קבצי ליבה הועתקו, רובם stubs ריקים. צריך להעתיק את הקוד האמיתי.
 
-## הגישה — העתקה + התאמה
+## שלב 2א: העתקת קבצי הליבה (הקוד האמיתי)
+העתקה ישירה מהפרויקט השני באמצעות `cross_project` tools:
 
-### שלב 1: העתקת קבצי הליבה (lib)
-העתקת כל קבצי ה-lib מהפרויקט השני לתיקייה `src/lib/optimizer/`:
+1. **indicators.ts** — RSI, EMA, ATR, BB, ADX (~429 שורות)
+2. **simulatorV2.ts** — מנוע סימולציה (~2,171 שורות)
+3. **strategies.ts** — לוגיקת 5 אסטרטגיות
+4. **strategyEngine.ts** — מנוע אסטרטגיות
+5. **smartOptimizer.ts** — אופטימיזציה רב-שלבית (~496 שורות)
+6. **portfolioOptimizer.ts** — אופטימיזציית פורטפוליו
+7. **portfolioSimulator.ts** — החלפת ה-stub בקוד אמיתי
+8. **multiObjectiveMetrics.ts** — מטריקות מתקדמות
+9. **presetConfigs.ts** — הגדרות ברירת מחדל
+10. **stageUtils.ts** — עזרים לשלבים
+11. **csvParser.ts** — פרסור נתונים
+12. **utils.ts** — פונקציות עזר
+13. **types.ts** — החלפה בגרסה המלאה מהפרויקט השני
+14. **strategyCombinationOptimizer.ts** — אופטימיזציה משולבת
 
-| קובץ | תיאור | שורות |
-|-------|--------|-------|
-| `simulatorV2.ts` | מנוע הסימולציה | ~2,171 |
-| `indicators.ts` | חישוב אינדיקטורים | ~429 |
-| `smartOptimizer.ts` | אופטימיזציה רב-שלבית | ~496 |
-| `strategies.ts` | לוגיקת אסטרטגיות | ? |
-| `strategyEngine.ts` | מנוע אסטרטגיות | ? |
-| `portfolioOptimizer.ts` | אופטימיזציית פורטפוליו | ? |
-| `portfolioSimulator.ts` | סימולציית פורטפוליו | ? |
-| `multiObjectiveMetrics.ts` | מטריקות | ? |
-| `debugConfig.ts` | קונפיגורציית דיבאג | ? |
-| `presetConfigs.ts` | הגדרות ברירת מחדל | ? |
-| `stageUtils.ts` | עזרים לשלבים | ? |
-| `csvParser.ts` | פרסור CSV | ? |
-| `memoryAwareOptimizer.ts` | אופטימייזר עם זיכרון | ? |
-| `utils.ts` | פונקציות עזר | ? |
+## שלב 2ב: Worker + Hook
+- העתקת `optimizer.worker.ts` → `src/workers/optimizer.worker.ts`
+- העתקת hook ל-`src/hooks/useOptimizationWorker.ts`
 
-### שלב 2: העתקת types + worker
-- `types.ts` → `src/lib/optimizer/types.ts`
-- `optimizer.worker.ts` → `src/workers/optimizer.worker.ts`
-- `useOptimizationWorker.ts` → `src/hooks/useOptimizationWorker.ts`
+## שלב 2ג: תיקון imports
+- עדכון כל ה-imports מ-`@/lib/` ל-`@/lib/optimizer/` או `./`
+- וידוא שאין תלויות שבורות
 
-### שלב 3: העתקת קומפוננטות UI
-כל 17 הקומפוננטות מ-`src/components/optimizer/` לתיקייה מקבילה בפרויקט הנוכחי.
+## הערה
+זה שלב גדול (~6,000+ שורות קוד). אעשה את זה בכמה צעדים — קודם indicators + simulator + strategies, אח"כ optimizer + portfolio, ולבסוף worker + hook.
 
-### שלב 4: עדכון דף Backtest
-- שדרוג `src/pages/Backtest.tsx` לכלול את ה-UI המלא של האופטימייזר
-- חיבור לנתונים מ-DB (market_data, tracked_symbols, optimization_results)
-- שמירת תוצאות אופטימיזציה ל-DB אוטומטית
-
-### שלב 5: אינטגרציה עם סוכנים
-- Edge function `run-optimization` שמפעילה אופטימיזציה אוטומטית
-- הסוכן הייעודי (Optimizer Agent) יוכל להפעיל אופטימיזציה ולשמור תוצאות
-
-### שלב 6: תיקון imports
-- עדכון כל ה-imports הפנימיים בקבצים המועתקים
-- התאמה למבנה התיקיות של הפרויקט הנוכחי
-
-## סיכום היקף
-- ~20 קבצי lib + 17 קומפוננטות + 1 worker + 1 hook + types
-- עדכון דף Backtest
-- Edge function חדש לאוטומציה
-
-## הערה חשובה
-זוהי העתקה של כ-40 קבצים עם אלפי שורות קוד. מומלץ לעשות זאת בשלבים — קודם את קבצי הליבה (lib + types), אחר כך ה-UI, ולבסוף האינטגרציה עם הסוכנים.
+קומפוננטות UI ודף Backtest — בשלב הבא.
 
