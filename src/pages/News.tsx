@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { useNewsAnalysis, useMarketDataLive } from "@/hooks/use-trading-data";
+import { useNewsAnalysis } from "@/hooks/use-trading-data";
+import { useMarketDataWebSocket } from "@/hooks/useMarketDataWebSocket";
 
 const impactLabels: Record<string, string> = { critical: "קריטי", high: "גבוה", medium: "בינוני", low: "נמוך", noise: "רעש", major: "משמעותי", moderate: "בינוני", minor: "קטן", none: "אפסי" };
 const sentimentIcons: Record<string, string> = { very_negative: "🔴", negative: "🟠", neutral: "⚪", positive: "🟢", very_positive: "💚", bullish: "🟢", bearish: "🔴" };
@@ -52,7 +53,7 @@ function getSentimentColor(score: number | null): string {
 
 export default function NewsPage() {
   const { data: analysisData } = useNewsAnalysis(100);
-  const { data: liveMarket = {} } = useMarketDataLive();
+  const { data: liveMarket = {}, wsStatus, isRealtime } = useMarketDataWebSocket();
   const [expandedId, setExpandedId] = useState<number | null>(null);
 
   const news = (analysisData?.news || []) as any[];
@@ -159,11 +160,19 @@ export default function NewsPage() {
         <div className="surface-card">
           <div className="surface-card-head">
             <span className="text-sm font-semibold">📊 VIX — מדד הפחד</span>
-            {vixCurrent > 0 && (
-              <span className="badge-pill" style={{ background: vrc + "18", color: vrc }}>
-                {regimeLabels[vixRegime] || "--"}
+            <div className="flex items-center gap-2">
+              <span className="text-[9px] px-1.5 py-0.5 rounded font-medium" style={{
+                background: isRealtime ? "hsl(var(--trading-profit) / 0.15)" : "hsl(var(--trading-warning) / 0.15)",
+                color: isRealtime ? "hsl(var(--trading-profit))" : "hsl(var(--trading-warning))"
+              }}>
+                {isRealtime ? "⚡ WS" : "🔄 REST"}
               </span>
-            )}
+              {vixCurrent > 0 && (
+                <span className="badge-pill" style={{ background: vrc + "18", color: vrc }}>
+                  {regimeLabels[vixRegime] || "--"}
+                </span>
+              )}
+            </div>
           </div>
           <div className="p-[18px]">
             <div className="flex items-baseline gap-2.5 mb-3">
