@@ -38,7 +38,7 @@ export default function NewsPage() {
   const { data: spyData = [] } = useMarketData("SPY");
 
   // News agent from agent_memory — map to actual fields
-  const newsAgent = agentMemory.find((m: any) => m.agent_id === "news_research" || m.agent_id === "news");
+  const newsAgent = agentMemory.find((m: any) => m.agent_id === "news_research" || m.agent_id === "newsResearch" || m.agent_id === "news");
   const newsState = newsAgent?.state as any || {};
   const totalPatterns = newsState.totalPatterns || 0;
   const lastResearch = newsState.lastResearch;
