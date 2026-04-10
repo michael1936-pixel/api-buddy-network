@@ -1,33 +1,23 @@
 
 
-# חיבור נתוני שוק בזמן אמת לסרגל העליון
+# תיקון דיליי בנתוני VIX בדף החדשות
 
 ## הבעיה
-הנתונים מגיעים מ-`fetch-market-data` בהצלחה (SPY: 681.22, VIX: 18.98), אבל בסרגל העליון (`AppLayout.tsx`) הערכים hardcoded כ-`--`.
+- **SPY**: מגיע ישירות מ-Twelve Data API (דיליי של דקה — תקין)
+- **VIX**: מגיע מה-DB שהשרת ב-Railway כותב אליו **כל 5 דקות**. זה הדיליי שאתה רואה
 
-שורות 59, 63:
-```
-<span className="font-mono text-trading-profit">VIX --</span>
-<span className="text-muted-foreground">שוק: --</span>
-```
+ב-DB רואים שהנתונים של VIX מתעדכנים כל 5 דקות (14:25, 14:20, 14:15...) בזמן שהשוק פתוח. אין נתוני SPY בכלל ב-DB (רק VIX).
 
 ## הפתרון
-קובץ אחד לעדכון: `src/components/AppLayout.tsx`
+לשנות את `fetch-market-data` edge function כך ש-VIX ייקרא **ישירות מ-Twelve Data API** במקום מה-DB — בדיוק כמו SPY.
 
-1. ייבוא `useMarketDataLive` מ-`use-trading-data`
-2. שליפת נתוני SPY ו-VIX מה-hook
-3. הצגת VIX עם צבע דינמי (ירוק מתחת ל-20, אדום מעל 25)
-4. הצגת מצב שוק: "פתוח" / "סגור" לפי שעות מסחר NYSE (14:30-21:00 UTC)
-5. הצגת מחיר SPY נוכחי
-6. צבע ירוק אם SPY עולה, אדום אם יורד
+### שינוי ב-`supabase/functions/fetch-market-data/index.ts`:
+1. שנה את רשימת הסמלים מ-`['SPY', 'VIXY']` ל-`['SPY', 'VIXY', 'VIX']`
+2. VIX נתמך ב-Twelve Data כסמל ישיר (CBOE Volatility Index)
+3. אם Twelve Data מחזיר VIX — להשתמש בזה. אם לא (fallback) — לקרוא מה-DB כמו היום
+4. לשמור גם את VIX ל-DB (כמו SPY) כדי שהשרת ב-Railway לא יהיה המקור היחיד
 
-## תצוגה צפויה בסרגל
-```
-VIX 18.98 · SPY 681.22 ↑ · שוק: פתוח · זמן אמת · 17:20:37
-```
-
-## פרטים טכניים
-- `useMarketDataLive()` כבר קיים ב-`use-trading-data.ts` עם `refetchInterval: 30000`
-- ה-response מחזיר `{ SPY: { close, prev_close }, VIX: { close, prev_close } }`
-- חישוב שינוי: `((close - prev_close) / prev_close * 100).toFixed(2)`
+### תוצאה צפויה
+- VIX יתעדכן כל 30 שניות (כמו SPY) במקום כל 5 דקות
+- Fallback ל-DB אם Twelve Data לא מחזיר VIX
 
