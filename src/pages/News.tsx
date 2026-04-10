@@ -188,9 +188,10 @@ export default function NewsPage() {
                 </>
               )}
             </div>
-            {vixTimestamp && (
+              {vixTimestamp && (
               <div className="text-[10px] text-muted-foreground">
-                עדכון: {new Date(vixTimestamp).toLocaleString("he-IL", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}
+                עדכון: {new Date(vixTimestamp).toLocaleTimeString("he-IL", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
+                {" "}({isRealtime ? "⚡ WS" : "REST"})
               </div>
             )}
           </div>
@@ -228,7 +229,8 @@ export default function NewsPage() {
             </div>
             {spyTimestamp && (
               <div className="text-[10px] text-muted-foreground mt-2">
-                עדכון: {new Date(spyTimestamp).toLocaleString("he-IL", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}
+                עדכון: {new Date(spyTimestamp).toLocaleTimeString("he-IL", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
+                {" "}({isRealtime ? "⚡ WS" : "REST"})
               </div>
             )}
           </div>

@@ -8,6 +8,19 @@ const TWELVE_DATA_KEY = Deno.env.get('TWELVE_DATA_API_KEY') || ''
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL') || ''
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || ''
 
+// Convert Twelve Data datetime (exchange-local, e.g. "2026-04-10 11:34:00") to proper ISO with NY timezone
+function toISOWithTZ(datetime: string): string {
+  // Twelve Data returns exchange-local time for US symbols (America/New_York)
+  // We append the timezone offset so the browser interprets it correctly
+  try {
+    // Parse as NY time and convert to UTC ISO
+    const d = new Date(datetime + ' EDT'); // US market hours = EDT (UTC-4) or EST (UTC-5)
+    if (!isNaN(d.getTime())) return d.toISOString();
+  } catch { /* fallback */ }
+  // If parsing fails, try adding explicit offset
+  return datetime.replace(' ', 'T') + '-04:00';
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders })
@@ -22,10 +35,10 @@ Deno.serve(async (req) => {
 
     const results: Record<string, any> = {}
 
-    // SPY + VIXY from Twelve Data
+    // Use /price endpoint for latest quote (faster, less API credits)
     const symbols = ['SPY', 'VIXY']
-    const url = `https://api.twelvedata.com/time_series?symbol=${symbols.join(',')}&interval=1min&outputsize=2&apikey=${TWELVE_DATA_KEY}`
-    const resp = await fetch(url)
+    const priceUrl = `https://api.twelvedata.com/time_series?symbol=${symbols.join(',')}&interval=1min&outputsize=2&apikey=${TWELVE_DATA_KEY}`
+    const resp = await fetch(priceUrl)
     const rawData = await resp.json()
 
     for (const sym of symbols) {
@@ -39,8 +52,10 @@ Deno.serve(async (req) => {
       results[sym] = {
         symbol: sym, open: parseFloat(latest.open), high: parseFloat(latest.high),
         low: parseFloat(latest.low), close: parseFloat(latest.close),
-        volume: parseInt(latest.volume || '0'), timestamp: latest.datetime,
+        volume: parseInt(latest.volume || '0'),
+        timestamp: toISOWithTZ(latest.datetime),
         prev_close: parseFloat(prev.close),
+        fetched_at: new Date().toISOString(),
       }
     }
 
@@ -60,8 +75,10 @@ Deno.serve(async (req) => {
           results.VIX = {
             symbol: 'VIX', open: latest.open, high: latest.high,
             low: latest.low, close: latest.close, volume: latest.volume,
-            timestamp: latest.timestamp, prev_close: prev.close,
+            timestamp: new Date(latest.timestamp).toISOString(),
+            prev_close: prev.close,
             source: 'db',
+            fetched_at: new Date().toISOString(),
           }
           vixFromDb = true
         }

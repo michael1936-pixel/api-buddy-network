@@ -17,12 +17,13 @@ interface TickData {
 type MarketDataMap = Record<string, TickData>;
 
 const RECONNECT_DELAY_MS = 3000;
-const MAX_RECONNECT_ATTEMPTS = 10;
+const MAX_RECONNECT_ATTEMPTS = 5;
 const HEARTBEAT_INTERVAL_MS = 10000;
 
 export function useMarketDataWebSocket() {
   const [data, setData] = useState<MarketDataMap>({});
   const [wsStatus, setWsStatus] = useState<"connecting" | "connected" | "disconnected" | "error">("disconnected");
+  const [subscribeSuccess, setSubscribeSuccess] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectCount = useRef(0);
   const reconnectTimer = useRef<ReturnType<typeof setTimeout>>();
@@ -30,6 +31,7 @@ export function useMarketDataWebSocket() {
   const apiKeyRef = useRef<string | null>(null);
   const firstPriceRef = useRef<Record<string, number>>({});
   const mountedRef = useRef(true);
+  const subscribeFailed = useRef(false);
 
   // REST fallback — always runs as baseline
   const { data: restData } = useMarketDataLive();
@@ -50,10 +52,9 @@ export function useMarketDataWebSocket() {
     }, HEARTBEAT_INTERVAL_MS);
   };
 
-  // Use a ref-based connect to avoid dependency issues
   const connectRef = useRef<() => void>();
   connectRef.current = async () => {
-    if (!mountedRef.current) return;
+    if (!mountedRef.current || subscribeFailed.current) return;
 
     if (!apiKeyRef.current) {
       try {
@@ -87,11 +88,12 @@ export function useMarketDataWebSocket() {
     ws.onopen = () => {
       if (!mountedRef.current) { ws.close(); return; }
       console.log("[WS] Connected to Twelve Data");
-      setWsStatus("connected");
+      // Don't set "connected" yet — wait for successful subscribe
 
+      // Simple format without exchange qualifiers
       ws.send(JSON.stringify({
         action: "subscribe",
-        params: { symbols: "SPY:NYSE,VIX:CBOE,VIXY:NYSE" },
+        params: { symbols: "SPY,VIX,VIXY" },
       }));
 
       startHeartbeat(ws);
@@ -104,13 +106,22 @@ export function useMarketDataWebSocket() {
 
         if (msg.event === "subscribe-status") {
           console.log("[WS] Subscribe status:", msg.status, "success:", msg.success, "fails:", msg.fails, "full:", JSON.stringify(msg));
-          if (msg.status === "ok" && msg.success?.length > 0) {
+          
+          if (msg.success?.length > 0) {
+            // At least some symbols succeeded
             reconnectCount.current = 0;
+            setSubscribeSuccess(true);
+            setWsStatus("connected");
           }
+          
           if (msg.status === "error" && (!msg.success || msg.success.length === 0)) {
-            console.warn("[WS] All symbols failed to subscribe, falling back to REST");
+            console.warn("[WS] All symbols failed to subscribe — stopping WS, using REST only");
+            subscribeFailed.current = true;
+            setSubscribeSuccess(false);
             setWsStatus("error");
             ws.close();
+            // Don't reconnect — the API doesn't support these symbols on this plan
+            return;
           }
           return;
         }
@@ -145,7 +156,7 @@ export function useMarketDataWebSocket() {
           });
         }
       } catch {
-        // Ignore
+        // Ignore parse errors
       }
     };
 
@@ -158,8 +169,12 @@ export function useMarketDataWebSocket() {
       console.log("[WS] Disconnected");
       if (!mountedRef.current) return;
       setWsStatus("disconnected");
+      setSubscribeSuccess(false);
       wsRef.current = null;
       stopHeartbeat();
+
+      // Don't reconnect if subscribe permanently failed
+      if (subscribeFailed.current) return;
 
       if (reconnectCount.current < MAX_RECONNECT_ATTEMPTS) {
         reconnectCount.current++;
@@ -223,6 +238,6 @@ export function useMarketDataWebSocket() {
   return {
     data: mergedData,
     wsStatus,
-    isRealtime: wsStatus === "connected",
+    isRealtime: subscribeSuccess && wsStatus === "connected",
   };
 }

@@ -240,7 +240,7 @@ export function useMarketDataLive() {
         return result;
       }
     },
-    refetchInterval: 30000,
+    refetchInterval: 15000, // Poll every 15s for fresher data
   });
 }
 
