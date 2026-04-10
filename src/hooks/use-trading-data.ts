@@ -174,6 +174,23 @@ export function useWeeklyReviews() {
   );
 }
 
+export function useMarketData(symbol: string) {
+  return useQuery({
+    queryKey: ["market_data", symbol],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("market_data")
+        .select("*")
+        .eq("symbol", symbol)
+        .order("timestamp", { ascending: false })
+        .limit(2);
+      if (error) throw error;
+      return data || [];
+    },
+    refetchInterval: 30000,
+  });
+}
+
 export function useTimeframeProfiles() {
   return useTableQuery(
     ["timeframe_profiles"],
