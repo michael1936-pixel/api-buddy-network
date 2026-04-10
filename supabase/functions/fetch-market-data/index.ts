@@ -21,15 +21,27 @@ Deno.serve(async (req) => {
     }
 
     const results: Record<string, any> = {}
+    const fetchedFromApi = new Set<string>()
 
-    // SPY + VIXY + VIX from Twelve Data in one call
-    const symbols = ['SPY', 'VIXY', 'VIX']
-    const url = `https://api.twelvedata.com/time_series?symbol=${symbols.join(',')}&interval=1min&outputsize=2&apikey=${TWELVE_DATA_KEY}`
-    const resp = await fetch(url)
-    const rawData = await resp.json()
+    // SPY + VIXY from Twelve Data
+    const mainSymbols = ['SPY', 'VIXY']
+    const mainUrl = `https://api.twelvedata.com/time_series?symbol=${mainSymbols.join(',')}&interval=1min&outputsize=2&apikey=${TWELVE_DATA_KEY}`
+    
+    // VIX separately (index, might need different handling)
+    const vixUrl = `https://api.twelvedata.com/time_series?symbol=VIX&interval=5min&outputsize=2&apikey=${TWELVE_DATA_KEY}`
 
-    for (const sym of symbols) {
-      const data = symbols.length > 1 ? rawData[sym] : rawData
+    const [mainResp, vixResp] = await Promise.all([
+      fetch(mainUrl),
+      fetch(vixUrl),
+    ])
+    const [mainData, vixData] = await Promise.all([
+      mainResp.json(),
+      vixResp.json(),
+    ])
+
+    // Parse SPY + VIXY
+    for (const sym of mainSymbols) {
+      const data = mainSymbols.length > 1 ? mainData[sym] : mainData
       if (!data || data.status === 'error' || !data.values?.length) {
         results[sym] = { error: data?.message || 'No data' }
         continue
@@ -42,10 +54,26 @@ Deno.serve(async (req) => {
         volume: parseInt(latest.volume || '0'), timestamp: latest.datetime,
         prev_close: parseFloat(prev.close),
       }
+      fetchedFromApi.add(sym)
+    }
+
+    // Parse VIX
+    if (vixData && vixData.status !== 'error' && vixData.values?.length) {
+      const latest = vixData.values[0]
+      const prev = vixData.values[1] || latest
+      results.VIX = {
+        symbol: 'VIX', open: parseFloat(latest.open), high: parseFloat(latest.high),
+        low: parseFloat(latest.low), close: parseFloat(latest.close),
+        volume: parseInt(latest.volume || '0'), timestamp: latest.datetime,
+        prev_close: parseFloat(prev.close),
+      }
+      fetchedFromApi.add('VIX')
+    } else {
+      console.warn('VIX from Twelve Data failed:', vixData?.message || 'No data')
     }
 
     // Fallback: if VIX failed from Twelve Data, try DB
-    if (results.VIX?.error && SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY) {
+    if (!fetchedFromApi.has('VIX') && SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY) {
       const sb = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
       const { data: vixRows } = await sb.from('market_data')
         .select('*').eq('symbol', 'VIX')
@@ -57,23 +85,26 @@ Deno.serve(async (req) => {
           symbol: 'VIX', open: latest.open, high: latest.high,
           low: latest.low, close: latest.close, volume: latest.volume,
           timestamp: latest.timestamp, prev_close: prev.close,
+          source: 'db_fallback',
         }
       }
     }
 
-    // Save SPY + VIX to DB
-    if (SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY) {
+    // Save API-fetched data to DB (skip fallback data to avoid duplicates)
+    if (SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY && fetchedFromApi.size > 0) {
       const sb = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
-      for (const sym of ['SPY', 'VIX']) {
+      for (const sym of fetchedFromApi) {
+        if (sym === 'VIXY') continue // only save SPY + VIX
         const r = results[sym]
         if (r && !r.error) {
-          await sb.from('market_data').insert({
+          await sb.from('market_data').upsert({
             symbol: sym, open: r.open, high: r.high,
             low: r.low, close: r.close, volume: r.volume,
             timestamp: new Date(r.timestamp).toISOString(), interval: '1min',
-          }).then(({ error }) => {
-            if (error) console.error(`DB insert error for ${sym}:`, error.message)
-          })
+          }, { onConflict: 'symbol,interval,timestamp', ignoreDuplicates: true })
+            .then(({ error }) => {
+              if (error) console.error(`DB upsert error for ${sym}:`, error.message)
+            })
         }
       }
     }
