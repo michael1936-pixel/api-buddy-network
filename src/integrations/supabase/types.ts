@@ -312,6 +312,9 @@ export type Database = {
           actual_vix_change: number | null
           affected_sectors: string[] | null
           affected_symbols: string[] | null
+          ai_analysis: string | null
+          ai_sentiment_score: number | null
+          analyzed_at: string | null
           category: string
           confidence: number | null
           created_at: string | null
@@ -319,6 +322,8 @@ export type Database = {
           headline: string
           id: number
           impact_level: string
+          predicted_spy_impact: string | null
+          predicted_vix_impact: string | null
           reaction_recorded: boolean | null
           sentiment: string | null
           source: string | null
@@ -333,6 +338,9 @@ export type Database = {
           actual_vix_change?: number | null
           affected_sectors?: string[] | null
           affected_symbols?: string[] | null
+          ai_analysis?: string | null
+          ai_sentiment_score?: number | null
+          analyzed_at?: string | null
           category: string
           confidence?: number | null
           created_at?: string | null
@@ -340,6 +348,8 @@ export type Database = {
           headline: string
           id?: number
           impact_level: string
+          predicted_spy_impact?: string | null
+          predicted_vix_impact?: string | null
           reaction_recorded?: boolean | null
           sentiment?: string | null
           source?: string | null
@@ -354,6 +364,9 @@ export type Database = {
           actual_vix_change?: number | null
           affected_sectors?: string[] | null
           affected_symbols?: string[] | null
+          ai_analysis?: string | null
+          ai_sentiment_score?: number | null
+          analyzed_at?: string | null
           category?: string
           confidence?: number | null
           created_at?: string | null
@@ -361,6 +374,8 @@ export type Database = {
           headline?: string
           id?: number
           impact_level?: string
+          predicted_spy_impact?: string | null
+          predicted_vix_impact?: string | null
           reaction_recorded?: boolean | null
           sentiment?: string | null
           source?: string | null
