@@ -29,29 +29,36 @@ export function useMarketDataWebSocket() {
   const heartbeatTimer = useRef<ReturnType<typeof setInterval>>();
   const apiKeyRef = useRef<string | null>(null);
   const firstPriceRef = useRef<Record<string, number>>({});
+  const mountedRef = useRef(true);
 
+  // REST fallback — always runs as baseline
   const { data: restData } = useMarketDataLive();
 
-  const stopHeartbeat = useCallback(() => {
+  const stopHeartbeat = () => {
     if (heartbeatTimer.current) {
       clearInterval(heartbeatTimer.current);
       heartbeatTimer.current = undefined;
     }
-  }, []);
+  };
 
-  const startHeartbeat = useCallback((ws: WebSocket) => {
+  const startHeartbeat = (ws: WebSocket) => {
     stopHeartbeat();
     heartbeatTimer.current = setInterval(() => {
       if (ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({ action: "heartbeat" }));
       }
     }, HEARTBEAT_INTERVAL_MS);
-  }, [stopHeartbeat]);
+  };
 
-  const connect = useCallback(async () => {
+  // Use a ref-based connect to avoid dependency issues
+  const connectRef = useRef<() => void>();
+  connectRef.current = async () => {
+    if (!mountedRef.current) return;
+
     if (!apiKeyRef.current) {
       try {
         const { data: tokenData, error } = await supabase.functions.invoke("get-ws-token");
+        if (!mountedRef.current) return;
         if (error || !tokenData?.token) {
           console.warn("[WS] Failed to get token:", error);
           setWsStatus("error");
@@ -60,7 +67,7 @@ export function useMarketDataWebSocket() {
         apiKeyRef.current = tokenData.token;
       } catch (e) {
         console.warn("[WS] get-ws-token error:", e);
-        setWsStatus("error");
+        if (mountedRef.current) setWsStatus("error");
         return;
       }
     }
@@ -71,42 +78,40 @@ export function useMarketDataWebSocket() {
     }
     stopHeartbeat();
 
+    if (!mountedRef.current) return;
     setWsStatus("connecting");
+
     const ws = new WebSocket(`wss://ws.twelvedata.com/v1/quotes/price?apikey=${apiKeyRef.current}`);
     wsRef.current = ws;
 
     ws.onopen = () => {
+      if (!mountedRef.current) { ws.close(); return; }
       console.log("[WS] Connected to Twelve Data");
       setWsStatus("connected");
       reconnectCount.current = 0;
 
-      // Subscribe with extended format for VIX (index on CBOE)
       ws.send(JSON.stringify({
         action: "subscribe",
-        params: {
-          symbols: "SPY,VIX,VIXY",
-        },
+        params: { symbols: "SPY,VIX,VIXY" },
       }));
 
       startHeartbeat(ws);
     };
 
     ws.onmessage = (event) => {
+      if (!mountedRef.current) return;
       try {
         const msg = JSON.parse(event.data);
 
         if (msg.event === "subscribe-status") {
-          console.log("[WS] Subscribe status:", msg.status, "successes:", msg.success, "fails:", msg.fails, "full:", JSON.stringify(msg));
-          // Don't disconnect on subscribe error — stay connected for successful symbols
+          console.log("[WS] Subscribe status:", msg.status, "success:", msg.success, "fails:", msg.fails, "full:", JSON.stringify(msg));
           return;
         }
-
         if (msg.event === "heartbeat") return;
 
         if (msg.event === "price" && msg.symbol) {
           const price = parseFloat(msg.price);
           if (isNaN(price)) return;
-
           const sym = msg.symbol;
 
           if (!firstPriceRef.current[sym]) {
@@ -116,7 +121,6 @@ export function useMarketDataWebSocket() {
           setData((prev) => {
             const existing = prev[sym];
             const prevClose = existing?.prev_close || firstPriceRef.current[sym] || price;
-
             return {
               ...prev,
               [sym]: {
@@ -134,17 +138,18 @@ export function useMarketDataWebSocket() {
           });
         }
       } catch {
-        // Ignore parse errors
+        // Ignore
       }
     };
 
     ws.onerror = (e) => {
       console.warn("[WS] Error:", e);
-      setWsStatus("error");
+      if (mountedRef.current) setWsStatus("error");
     };
 
     ws.onclose = () => {
       console.log("[WS] Disconnected");
+      if (!mountedRef.current) return;
       setWsStatus("disconnected");
       wsRef.current = null;
       stopHeartbeat();
@@ -153,17 +158,19 @@ export function useMarketDataWebSocket() {
         reconnectCount.current++;
         const delay = RECONNECT_DELAY_MS * reconnectCount.current;
         console.log(`[WS] Reconnecting in ${delay}ms (attempt ${reconnectCount.current})`);
-        reconnectTimer.current = setTimeout(connect, delay);
+        reconnectTimer.current = setTimeout(() => connectRef.current?.(), delay);
       } else {
         console.warn("[WS] Max reconnect attempts reached, using REST fallback");
         setWsStatus("error");
       }
     };
-  }, [startHeartbeat, stopHeartbeat]);
+  };
 
   useEffect(() => {
-    connect();
+    mountedRef.current = true;
+    connectRef.current?.();
     return () => {
+      mountedRef.current = false;
       if (reconnectTimer.current) clearTimeout(reconnectTimer.current);
       stopHeartbeat();
       if (wsRef.current) {
@@ -171,9 +178,9 @@ export function useMarketDataWebSocket() {
         wsRef.current.close();
       }
     };
-  }, [connect, stopHeartbeat]);
+  }, []);
 
-  // Seed prev_close from REST data
+  // Seed prev_close from REST
   useEffect(() => {
     if (restData) {
       setData((prev) => {
