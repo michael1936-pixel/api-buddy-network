@@ -1,36 +1,41 @@
 
 
-# ניתוח מסמך סוכנים ותיקון מיפוי מלא
+# שליפת נתונים בזמן אמת — Edge Functions + Frontend Polling
 
-## מצב נוכחי — הבעיה המרכזית
+## הגישה
+במקום cron כל 15 דקות, נבנה **edge functions שהפרונטאנד קורא להן ישירות** עם רענון כל 30 שניות. זה נותן נתונים כמעט בזמן אמת.
 
-בבסיס הנתונים יש רק 2 רשומות ב-`agent_memory`:
-- `news_research` — אבל ה-UI מחפש `"news"`
-- `strategy_researcher` — **לא קיים כלל** ברשימת ה-AGENTS בדשבורד
+## מה נבנה
 
-זו הבעיה העיקרית: **ה-IDs בקוד לא תואמים ל-IDs שהשרת כותב לבסיס הנתונים.**
+### 1. Edge Function: `fetch-market-data`
+- קורא ל-**Twelve Data API** (`/time_series?symbol=SPY,VIX&interval=1min&outputsize=1`)
+- מחזיר מחירים עדכניים ישירות לפרונטאנד
+- גם כותב ל-`market_data` לשמירת היסטוריה
 
-## התוכנית
+### 2. Edge Function: `fetch-news`
+- קורא ל-**Finnhub API** (`/api/v1/news?category=general`)
+- מחזיר חדשות ישירות לפרונטאנד
+- כותב ל-`news_events` (מסנן כפילויות לפי `event_id`)
 
-### שלב 1: חילוץ וקריאת המסמך
-- אחלץ את `algomaykl-30-agents-docs.tar.gz` לקבצים
-- אקרא כל קובץ סוכן ואמפה: שם, ID אמיתי (כפי שהשרת כותב), שדות state, תכונות, תפקיד
+### 3. עדכון Frontend
+- `useMarketData` → קורא ל-edge function כל **30 שניות** במקום ישירות מהטבלה
+- `useNewsEvents` → קורא ל-edge function כל **60 שניות**
+- Fallback: אם ה-edge function נכשל, שולף מהטבלה
 
-### שלב 2: עדכון רשימת AGENTS ב-Agents.tsx
-- אעדכן את מערך ה-AGENTS עם ה-IDs הנכונים שתואמים למה שהשרת כותב ל-`agent_memory`
-- אוסיף סוכנים חסרים (כמו `strategy_researcher`)
-- אתקן קטגוריות, שמות ואייקונים לפי המסמך
+## דרישות מוקדמות — API Keys
+צריך לשמור 2 secrets:
+1. **TWELVE_DATA_API_KEY** — מ-Twelve Data
+2. **FINNHUB_API_KEY** — מ-Finnhub
 
-### שלב 3: תיקון מיפוי שדות State
-- לכל סוכן, אוודא שה-detail panel מציג את השדות הנכונים מתוך ה-state שלו
-- אוסיף תצוגה מותאמת לסוכנים מרכזיים (CEO, News, VIX, Psychology) שמציגה את המסקנות בצורה קריאה ולא רק key-value גולמי
+## קבצים
 
-### שלב 4: תיקון חיבורים בשאר הדפים
-- Pipeline, Decisions, Learning — יתעדכנו עם IDs נכונים
-- News.tsx — כבר תוקן חלקית, אוודא שה-agent_id תואם
-
-**קבצים:** `src/pages/Agents.tsx`, `src/pages/Pipeline.tsx`, `src/pages/News.tsx`, `src/hooks/use-trading-data.ts`, ואולי דפים נוספים לפי מה שיתגלה במסמך.
+| קובץ | פעולה |
+|-------|--------|
+| `supabase/functions/fetch-market-data/index.ts` | חדש |
+| `supabase/functions/fetch-news/index.ts` | חדש |
+| `src/hooks/use-trading-data.ts` | עדכון — hooks חדשים שקוראים ל-edge functions |
+| `src/pages/News.tsx` | עדכון — שימוש ב-hooks החדשים |
 
 ## תוצאה
-כל סוכן בדשבורד יתאים בדיוק למה שהשרת כותב — IDs, שדות state, תכונות ומסקנות.
+SPY, VIX וחדשות יתעדכנו כל 30-60 שניות בזמן אמת, ישירות מ-Twelve Data ו-Finnhub.
 
