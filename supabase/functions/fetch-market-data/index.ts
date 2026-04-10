@@ -44,7 +44,7 @@ Deno.serve(async (req) => {
 
     // VIX from Finnhub quote endpoint
     if (FINNHUB_KEY) {
-      const url = `https://finnhub.io/api/v1/quote?symbol=^VIX&token=${FINNHUB_KEY}`
+      const url = `https://finnhub.io/api/v1/quote?symbol=%5EVIX&token=${FINNHUB_KEY}`
       const resp = await fetch(url)
       const q = await resp.json()
       if (q && q.c > 0) {
@@ -54,13 +54,11 @@ Deno.serve(async (req) => {
           prev_close: q.pc,
         }
       } else {
-        // Fallback: try ^GSPC index or just report error
         results.VIX = { error: 'VIX quote unavailable' }
       }
     }
-    }
 
-    // Write to market_data in background (don't block response)
+    // Write to market_data
     if (SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY) {
       const sb = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
       for (const sym of ['SPY', 'VIX']) {
