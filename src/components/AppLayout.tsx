@@ -16,12 +16,28 @@ const navItems = [
 
 export default function AppLayout({ children }: { children: ReactNode }) {
   const location = useLocation();
+  const { data: marketData } = useMarketDataLive();
   const [clock, setClock] = useState("");
 
   useEffect(() => {
     const t = setInterval(() => setClock(new Date().toLocaleTimeString("he-IL")), 1000);
     return () => clearInterval(t);
   }, []);
+
+  const vix = marketData?.VIX?.close;
+  const spy = marketData?.SPY?.close;
+  const spyPrev = marketData?.SPY?.prev_close;
+  const spyChange = spy && spyPrev ? ((spy - spyPrev) / spyPrev * 100) : null;
+  const spyUp = spyChange !== null ? spyChange >= 0 : null;
+
+  const isMarketOpen = useMemo(() => {
+    const now = new Date();
+    const utcH = now.getUTCHours();
+    const utcM = now.getUTCMinutes();
+    const mins = utcH * 60 + utcM;
+    const day = now.getUTCDay();
+    return day >= 1 && day <= 5 && mins >= 14 * 60 + 30 && mins < 21 * 60;
+  }, [clock]);
 
   return (
     <div className="min-h-screen">
