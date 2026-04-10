@@ -1,7 +1,5 @@
-import { useNewsEvents, useAgentMemory } from "@/hooks/use-trading-data";
-import { cn } from "@/lib/utils";
+import { useNewsEvents, useAgentMemory, useMarketData } from "@/hooks/use-trading-data";
 
-const riskLabels: Record<string, string> = { extreme: "קריטי", high: "גבוה", medium: "בינוני", low: "נמוך", none: "אין" };
 const impactLabels: Record<string, string> = { critical: "קריטי", high: "גבוה", medium: "בינוני", low: "נמוך", noise: "רעש", major: "משמעותי", moderate: "בינוני", minor: "קטן", none: "אפסי" };
 const sentimentIcons: Record<string, string> = { very_negative: "🔴", negative: "🟠", neutral: "⚪", positive: "🟢", very_positive: "💚", bullish: "🟢", bearish: "🔴" };
 
@@ -36,24 +34,49 @@ function getVixRegime(v: number): string {
 export default function NewsPage() {
   const { data: news = [] } = useNewsEvents(100);
   const { data: agentMemory = [] } = useAgentMemory();
+  const { data: vixData = [] } = useMarketData("VIX");
+  const { data: spyData = [] } = useMarketData("SPY");
 
-  // Try to get news intel from agent_memory
+  // News agent from agent_memory — map to actual fields
   const newsAgent = agentMemory.find((m: any) => m.agent_id === "news_research" || m.agent_id === "news");
   const newsState = newsAgent?.state as any || {};
+  const totalPatterns = newsState.totalPatterns || 0;
+  const lastResearch = newsState.lastResearch;
+  const newsConclusions = newsState.conclusions || {};
+  const newsReasoning = totalPatterns > 0
+    ? `${totalPatterns} דפוסים נלמדו`
+    : lastResearch
+      ? `סריקה אחרונה: ${new Date(lastResearch).toLocaleString("he-IL", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}`
+      : "ממתין לסריקת חדשות ראשונה";
 
-  // VIX data from agent memory
-  const vixAgent = agentMemory.find((m: any) => m.agent_id === "vix");
-  const vixState = vixAgent?.state as any || {};
-  const vixCurrent = vixState.current || vixState.lastValue || 0;
-  const vixChangePct = vixState.changePct || 0;
-  const vixRegime = vixState.regime || getVixRegime(vixCurrent);
-  const vixTrend = vixState.trend || "stable";
+  // VIX from market_data
+  const vixRow = vixData[0] as any;
+  const vixPrevRow = vixData[1] as any;
+  const vixCurrent = vixRow?.close || 0;
+  const vixPrev = vixPrevRow?.close || vixCurrent;
+  const vixChangePct = vixPrev > 0 ? ((vixCurrent - vixPrev) / vixPrev) * 100 : 0;
+  const vixRegime = getVixRegime(vixCurrent);
+  const vixTrend = vixChangePct > 1 ? "rising" : vixChangePct < -1 ? "falling" : "stable";
   const trendIcons: Record<string, string> = { rising: "📈", falling: "📉", stable: "➡️" };
   const trendLabels: Record<string, string> = { rising: "עולה", falling: "יורד", stable: "יציב" };
   const vrc = regimeColors[vixRegime] || "hsl(var(--muted-foreground))";
 
-  const riskLevel = newsState.riskLevel || "none";
-  const riskColor = riskLevel === "none" ? "hsl(var(--muted-foreground))" : riskLevel === "low" ? "hsl(var(--trading-profit))" : riskLevel === "high" ? "#ff6b35" : "hsl(var(--trading-loss))";
+  // SPY from market_data
+  const spyRow = spyData[0] as any;
+  const spyPrevRow = spyData[1] as any;
+  const spyCurrent = spyRow?.close || 0;
+  const spyPrev = spyPrevRow?.close || spyCurrent;
+  const spyChangePct = spyPrev > 0 ? ((spyCurrent - spyPrev) / spyPrev) * 100 : 0;
+  const spyHigh = spyRow?.high || 0;
+  const spyLow = spyRow?.low || 0;
+  const spyVolume = spyRow?.volume || 0;
+
+  // Risk level derived from news conclusions or patterns
+  const riskLevel = newsConclusions.riskLevel || (totalPatterns > 5 ? "medium" : "none");
+  const riskLabels: Record<string, string> = { extreme: "קריטי", high: "גבוה", medium: "בינוני", low: "נמוך", none: "אין" };
+  const riskColor = riskLevel === "none" ? "hsl(var(--muted-foreground))" : riskLevel === "low" ? "hsl(var(--trading-profit))" : riskLevel === "high" || riskLevel === "extreme" ? "hsl(var(--trading-loss))" : "hsl(var(--trading-warning))";
+
+  const formatVol = (v: number) => v >= 1e6 ? `${(v / 1e6).toFixed(1)}M` : v >= 1e3 ? `${(v / 1e3).toFixed(0)}K` : String(v);
 
   return (
     <div className="space-y-4">
@@ -65,16 +88,18 @@ export default function NewsPage() {
               <div className="w-12 h-12 rounded-[14px] flex items-center justify-center text-2xl" style={{ background: riskColor + "15" }}>📰</div>
               <div>
                 <div className="text-lg font-extrabold">סוכן מודיעין חדשות</div>
-                <div className="text-xs text-muted-foreground mt-0.5">{newsState.reasoning || "אין אירועי חדשות משמעותיים"}</div>
+                <div className="text-xs text-muted-foreground mt-0.5">{newsReasoning}</div>
               </div>
             </div>
             <div className="text-left">
               <span className="badge-pill text-xs py-1 px-3.5" style={{ background: riskColor + "18", color: riskColor }}>
                 סיכון: {riskLabels[riskLevel] || "--"}
               </span>
-              <div className="text-[10px] text-muted-foreground mt-1">
-                {newsState.tradesMonitored ? `${newsState.tradesMonitored} עסקאות בניטור` : ""}
-              </div>
+              {news.length > 0 && (
+                <div className="text-[10px] text-muted-foreground mt-1">
+                  {news.length} אירועים
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -97,7 +122,7 @@ export default function NewsPage() {
               <span className="font-mono text-[28px] font-extrabold" style={{ color: vrc }}>
                 {vixCurrent > 0 ? vixCurrent.toFixed(1) : "--"}
               </span>
-              {vixCurrent > 0 && (
+              {vixCurrent > 0 && vixPrev !== vixCurrent && (
                 <>
                   <span className="font-mono text-sm font-semibold" style={{ color: vixChangePct >= 0 ? "hsl(var(--trading-loss))" : "hsl(var(--trading-profit))" }}>
                     {vixChangePct >= 0 ? "+" : ""}{vixChangePct.toFixed(1)}%
@@ -106,19 +131,9 @@ export default function NewsPage() {
                 </>
               )}
             </div>
-            <div className="grid grid-cols-2 gap-2">
-              <div className="text-center p-2 rounded-lg" style={{ background: 'hsl(var(--surface2))' }}>
-                <div className="font-mono text-xs text-foreground">{vixState.adjustments?.positionSizeMultiplier ? `${vixState.adjustments.positionSizeMultiplier.toFixed(0)}x` : "0x"}</div>
-                <div className="text-[9px] text-muted-foreground">מכפיל גודל</div>
-              </div>
-              <div className="text-center p-2 rounded-lg" style={{ background: 'hsl(var(--surface2))' }}>
-                <div className="font-mono text-xs text-foreground">{vixState.adjustments?.maxPositions || "--"}</div>
-                <div className="text-[9px] text-muted-foreground">מקס פוזיציות</div>
-              </div>
-            </div>
-            {vixState.adjustments?.message && (
-              <div className="text-[11px] text-muted-foreground mt-2.5 p-2 rounded-lg" style={{ background: 'hsl(var(--surface2))' }}>
-                {vixState.adjustments.message}
+            {vixRow && (
+              <div className="text-[10px] text-muted-foreground">
+                עדכון: {new Date(vixRow.timestamp).toLocaleString("he-IL", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}
               </div>
             )}
           </div>
@@ -131,23 +146,34 @@ export default function NewsPage() {
           </div>
           <div className="p-[18px]">
             <div className="flex items-baseline gap-2.5 mb-3">
-              <span className="font-mono text-[28px] font-extrabold text-trading-loss">--</span>
-              <span className="font-mono text-sm font-semibold text-muted-foreground">0.00%</span>
+              <span className="font-mono text-[28px] font-extrabold" style={{ color: spyCurrent > 0 ? (spyChangePct >= 0 ? "hsl(var(--trading-profit))" : "hsl(var(--trading-loss))") : "hsl(var(--muted-foreground))" }}>
+                {spyCurrent > 0 ? `$${spyCurrent.toFixed(2)}` : "--"}
+              </span>
+              {spyCurrent > 0 && spyPrev !== spyCurrent && (
+                <span className="font-mono text-sm font-semibold" style={{ color: spyChangePct >= 0 ? "hsl(var(--trading-profit))" : "hsl(var(--trading-loss))" }}>
+                  {spyChangePct >= 0 ? "+" : ""}{spyChangePct.toFixed(2)}%
+                </span>
+              )}
             </div>
             <div className="grid grid-cols-3 gap-2">
               <div className="text-center p-2 rounded-lg" style={{ background: 'hsl(var(--surface2))' }}>
-                <div className="font-mono text-xs text-muted-foreground">--</div>
+                <div className="font-mono text-xs text-foreground">{spyVolume > 0 ? formatVol(spyVolume) : "--"}</div>
                 <div className="text-[9px] text-muted-foreground">נפח</div>
               </div>
               <div className="text-center p-2 rounded-lg" style={{ background: 'hsl(var(--surface2))' }}>
-                <div className="font-mono text-xs text-muted-foreground">--$</div>
+                <div className="font-mono text-xs text-foreground">{spyHigh > 0 ? `$${spyHigh.toFixed(2)}` : "--"}</div>
                 <div className="text-[9px] text-muted-foreground">גבוה</div>
               </div>
               <div className="text-center p-2 rounded-lg" style={{ background: 'hsl(var(--surface2))' }}>
-                <div className="font-mono text-xs text-muted-foreground">--$</div>
+                <div className="font-mono text-xs text-foreground">{spyLow > 0 ? `$${spyLow.toFixed(2)}` : "--"}</div>
                 <div className="text-[9px] text-muted-foreground">נמוך</div>
               </div>
             </div>
+            {spyRow && (
+              <div className="text-[10px] text-muted-foreground mt-2">
+                עדכון: {new Date(spyRow.timestamp).toLocaleString("he-IL", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}
+              </div>
+            )}
           </div>
         </div>
       </div>
