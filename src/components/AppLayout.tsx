@@ -1,7 +1,7 @@
 import { ReactNode, useState, useEffect, useMemo } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { cn } from "@/lib/utils";
-import { useMarketDataWebSocket } from "@/hooks/useMarketDataWebSocket";
+import { useMarketData } from "@/contexts/MarketDataContext";
 
 const navItems = [
   { to: "/", label: "סקירה" },
@@ -16,7 +16,7 @@ const navItems = [
 
 export default function AppLayout({ children }: { children: ReactNode }) {
   const location = useLocation();
-  const { data: marketData, isRealtime } = useMarketDataWebSocket();
+  const { data: marketData, isRealtime } = useMarketData();
   const [clock, setClock] = useState("");
 
   useEffect(() => {

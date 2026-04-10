@@ -88,11 +88,10 @@ export function useMarketDataWebSocket() {
       if (!mountedRef.current) { ws.close(); return; }
       console.log("[WS] Connected to Twelve Data");
       setWsStatus("connected");
-      reconnectCount.current = 0;
 
       ws.send(JSON.stringify({
         action: "subscribe",
-        params: { symbols: "SPY,VIX,VIXY" },
+        params: { symbols: "SPY:NYSE,VIX:CBOE,VIXY:NYSE" },
       }));
 
       startHeartbeat(ws);
@@ -105,6 +104,14 @@ export function useMarketDataWebSocket() {
 
         if (msg.event === "subscribe-status") {
           console.log("[WS] Subscribe status:", msg.status, "success:", msg.success, "fails:", msg.fails, "full:", JSON.stringify(msg));
+          if (msg.status === "ok" && msg.success?.length > 0) {
+            reconnectCount.current = 0;
+          }
+          if (msg.status === "error" && (!msg.success || msg.success.length === 0)) {
+            console.warn("[WS] All symbols failed to subscribe, falling back to REST");
+            setWsStatus("error");
+            ws.close();
+          }
           return;
         }
         if (msg.event === "heartbeat") return;
@@ -156,7 +163,7 @@ export function useMarketDataWebSocket() {
 
       if (reconnectCount.current < MAX_RECONNECT_ATTEMPTS) {
         reconnectCount.current++;
-        const delay = RECONNECT_DELAY_MS * reconnectCount.current;
+        const delay = Math.min(RECONNECT_DELAY_MS * Math.pow(2, reconnectCount.current - 1), 60000);
         console.log(`[WS] Reconnecting in ${delay}ms (attempt ${reconnectCount.current})`);
         reconnectTimer.current = setTimeout(() => connectRef.current?.(), delay);
       } else {
