@@ -160,11 +160,19 @@ export default function NewsPage() {
         <div className="surface-card">
           <div className="surface-card-head">
             <span className="text-sm font-semibold">📊 VIX — מדד הפחד</span>
-            {vixCurrent > 0 && (
-              <span className="badge-pill" style={{ background: vrc + "18", color: vrc }}>
-                {regimeLabels[vixRegime] || "--"}
+            <div className="flex items-center gap-2">
+              <span className="text-[9px] px-1.5 py-0.5 rounded font-medium" style={{
+                background: isRealtime ? "hsl(var(--trading-profit) / 0.15)" : "hsl(var(--trading-warning) / 0.15)",
+                color: isRealtime ? "hsl(var(--trading-profit))" : "hsl(var(--trading-warning))"
+              }}>
+                {isRealtime ? "⚡ WS" : "🔄 REST"}
               </span>
-            )}
+              {vixCurrent > 0 && (
+                <span className="badge-pill" style={{ background: vrc + "18", color: vrc }}>
+                  {regimeLabels[vixRegime] || "--"}
+                </span>
+              )}
+            </div>
           </div>
           <div className="p-[18px]">
             <div className="flex items-baseline gap-2.5 mb-3">
