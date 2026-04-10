@@ -1,4 +1,4 @@
-import { useNewsEvents, useAgentMemory, useMarketData } from "@/hooks/use-trading-data";
+import { useNewsEventsLive, useAgentMemory, useMarketDataLive } from "@/hooks/use-trading-data";
 
 const impactLabels: Record<string, string> = { critical: "קריטי", high: "גבוה", medium: "בינוני", low: "נמוך", noise: "רעש", major: "משמעותי", moderate: "בינוני", minor: "קטן", none: "אפסי" };
 const sentimentIcons: Record<string, string> = { very_negative: "🔴", negative: "🟠", neutral: "⚪", positive: "🟢", very_positive: "💚", bullish: "🟢", bearish: "🔴" };
@@ -32,10 +32,13 @@ function getVixRegime(v: number): string {
 }
 
 export default function NewsPage() {
-  const { data: news = [] } = useNewsEvents(100);
+  const { data: newsRaw = [] } = useNewsEventsLive(100);
   const { data: agentMemory = [] } = useAgentMemory();
-  const { data: vixData = [] } = useMarketData("VIX");
-  const { data: spyData = [] } = useMarketData("SPY");
+  const { data: liveMarket = {} } = useMarketDataLive();
+
+  const news = newsRaw as any[];
+  const vixLive = (liveMarket as any)?.VIX;
+  const spyLive = (liveMarket as any)?.SPY;
 
   // News agent from agent_memory — map to actual fields
   const newsAgent = agentMemory.find((m: any) => m.agent_id === "news_research" || m.agent_id === "newsResearch" || m.agent_id === "news");
@@ -49,27 +52,25 @@ export default function NewsPage() {
       ? `סריקה אחרונה: ${new Date(lastResearch).toLocaleString("he-IL", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}`
       : "ממתין לסריקת חדשות ראשונה";
 
-  // VIX from market_data
-  const vixRow = vixData[0] as any;
-  const vixPrevRow = vixData[1] as any;
-  const vixCurrent = vixRow?.close || 0;
-  const vixPrev = vixPrevRow?.close || vixCurrent;
+  // VIX from live market data
+  const vixCurrent = vixLive?.close || 0;
+  const vixPrev = vixLive?.prev_close || vixCurrent;
   const vixChangePct = vixPrev > 0 ? ((vixCurrent - vixPrev) / vixPrev) * 100 : 0;
   const vixRegime = getVixRegime(vixCurrent);
   const vixTrend = vixChangePct > 1 ? "rising" : vixChangePct < -1 ? "falling" : "stable";
   const trendIcons: Record<string, string> = { rising: "📈", falling: "📉", stable: "➡️" };
   const trendLabels: Record<string, string> = { rising: "עולה", falling: "יורד", stable: "יציב" };
   const vrc = regimeColors[vixRegime] || "hsl(var(--muted-foreground))";
+  const vixTimestamp = vixLive?.timestamp;
 
-  // SPY from market_data
-  const spyRow = spyData[0] as any;
-  const spyPrevRow = spyData[1] as any;
-  const spyCurrent = spyRow?.close || 0;
-  const spyPrev = spyPrevRow?.close || spyCurrent;
+  // SPY from live market data
+  const spyCurrent = spyLive?.close || 0;
+  const spyPrev = spyLive?.prev_close || spyCurrent;
   const spyChangePct = spyPrev > 0 ? ((spyCurrent - spyPrev) / spyPrev) * 100 : 0;
-  const spyHigh = spyRow?.high || 0;
-  const spyLow = spyRow?.low || 0;
-  const spyVolume = spyRow?.volume || 0;
+  const spyHigh = spyLive?.high || 0;
+  const spyLow = spyLive?.low || 0;
+  const spyVolume = spyLive?.volume || 0;
+  const spyTimestamp = spyLive?.timestamp;
 
   // Risk level derived from news conclusions or patterns
   const riskLevel = newsConclusions.riskLevel || (totalPatterns > 5 ? "medium" : "none");
@@ -131,9 +132,9 @@ export default function NewsPage() {
                 </>
               )}
             </div>
-            {vixRow && (
+            {vixTimestamp && (
               <div className="text-[10px] text-muted-foreground">
-                עדכון: {new Date(vixRow.timestamp).toLocaleString("he-IL", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}
+                עדכון: {new Date(vixTimestamp).toLocaleString("he-IL", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}
               </div>
             )}
           </div>
@@ -169,9 +170,9 @@ export default function NewsPage() {
                 <div className="text-[9px] text-muted-foreground">נמוך</div>
               </div>
             </div>
-            {spyRow && (
+            {spyTimestamp && (
               <div className="text-[10px] text-muted-foreground mt-2">
-                עדכון: {new Date(spyRow.timestamp).toLocaleString("he-IL", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}
+                עדכון: {new Date(spyTimestamp).toLocaleString("he-IL", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}
               </div>
             )}
           </div>
