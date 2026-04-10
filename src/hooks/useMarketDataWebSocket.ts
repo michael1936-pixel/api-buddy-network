@@ -203,38 +203,22 @@ export function useMarketDataWebSocket() {
     };
   }, []);
 
-  // Seed prev_close from REST
+  // Keep prev_close ref updated from REST (no state mutation)
   useEffect(() => {
     if (restData) {
-      setData((prev) => {
-        const updated = { ...prev };
-        for (const [sym, rd] of Object.entries(restData as Record<string, any>)) {
-          if (rd && !rd.error && !updated[sym]?.source) {
-            updated[sym] = {
-              symbol: sym,
-              close: rd.close,
-              open: rd.open || rd.close,
-              high: rd.high || rd.close,
-              low: rd.low || rd.close,
-              volume: rd.volume || 0,
-              prev_close: rd.prev_close || rd.close,
-              timestamp: rd.timestamp || new Date().toISOString(),
-              source: "rest",
-            };
-            if (!firstPriceRef.current[sym]) {
-              firstPriceRef.current[sym] = rd.prev_close || rd.close;
-            }
-          }
-          if (rd?.prev_close && updated[sym]) {
-            updated[sym] = { ...updated[sym], prev_close: rd.prev_close };
-          }
+      for (const [sym, rd] of Object.entries(restData as Record<string, any>)) {
+        if (rd?.prev_close && !firstPriceRef.current[sym]) {
+          firstPriceRef.current[sym] = rd.prev_close;
         }
-        return updated;
-      });
+      }
     }
   }, [restData]);
 
-  const mergedData = { ...((restData as MarketDataMap) || {}), ...data };
+  // REST as base, WS data overrides only when source === "ws"
+  const wsEntries = Object.fromEntries(
+    Object.entries(data).filter(([_, v]) => v.source === "ws")
+  );
+  const mergedData = { ...((restData as MarketDataMap) || {}), ...wsEntries };
 
   return {
     data: mergedData,
