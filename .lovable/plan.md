@@ -1,42 +1,36 @@
 
 
-# למה הדשבורד לא מציג נתונים — ניתוח ותיקון
+# ניתוח מסמך סוכנים ותיקון מיפוי מלא
 
-## הבעיה הראשית
-רוב הטבלאות **ריקות לגמרי** בבסיס הנתונים:
+## מצב נוכחי — הבעיה המרכזית
 
-| טבלה | שורות |
-|-------|--------|
-| agent_memory | 2 ✅ |
-| market_data | 1 ✅ |
-| כל השאר | **0** ❌ |
+בבסיס הנתונים יש רק 2 רשומות ב-`agent_memory`:
+- `news_research` — אבל ה-UI מחפש `"news"`
+- `strategy_researcher` — **לא קיים כלל** ברשימת ה-AGENTS בדשבורד
 
-אבל **גם הנתונים שכן קיימים** לא מוצגים בגלל בעיות מיפוי בקוד:
-
-## באגים שצריך לתקן
-
-### 1. VIX — מחפש במקום הלא נכון
-הקוד ב-News.tsx מחפש `agent_id === "vix"` ב-`agent_memory`, אבל נתוני VIX נמצאים ב-**`market_data`** (symbol: "VIX", close: 19.49). צריך hook `useMarketData("VIX")` שישלוף מ-market_data.
-
-### 2. SPY — הרדקודד "--"
-כרטיס SPY מציג "--" תמיד. צריך לשלוף מ-`market_data` (symbol: "SPY").
-
-### 3. סוכן חדשות — שדות לא תואמים
-הקוד מחפש `newsState.riskLevel`, `newsState.reasoning`, `newsState.tradesMonitored` — אבל ה-state האמיתי של `news_research` מכיל:
-```
-{ patterns: [], conclusions: {}, lastResearch: "...", totalPatterns: 0 }
-```
-צריך למפות לשדות הנכונים.
-
-### 4. חסר hook למשיכת market_data
-אין `useMarketData` ב-hooks — צריך להוסיף אחד שמושך את הנתון האחרון לכל סימבול.
+זו הבעיה העיקרית: **ה-IDs בקוד לא תואמים ל-IDs שהשרת כותב לבסיס הנתונים.**
 
 ## התוכנית
 
-1. **הוספת `useMarketData(symbol)` hook** — שולף שורה אחרונה מ-`market_data` לפי symbol
-2. **תיקון News.tsx** — VIX ו-SPY ישלפו מ-`market_data` במקום `agent_memory`
-3. **תיקון מיפוי news agent** — שימוש בשדות `conclusions`, `totalPatterns`, `lastResearch` במקום השדות הלא קיימים
-4. **הוספת fallback חכם** — כשאין נתונים, הצגת הודעה ברורה עם זמן העדכון האחרון של כל טבלה
+### שלב 1: חילוץ וקריאת המסמך
+- אחלץ את `algomaykl-30-agents-docs.tar.gz` לקבצים
+- אקרא כל קובץ סוכן ואמפה: שם, ID אמיתי (כפי שהשרת כותב), שדות state, תכונות, תפקיד
 
-**קבצים:** `src/hooks/use-trading-data.ts`, `src/pages/News.tsx`
+### שלב 2: עדכון רשימת AGENTS ב-Agents.tsx
+- אעדכן את מערך ה-AGENTS עם ה-IDs הנכונים שתואמים למה שהשרת כותב ל-`agent_memory`
+- אוסיף סוכנים חסרים (כמו `strategy_researcher`)
+- אתקן קטגוריות, שמות ואייקונים לפי המסמך
+
+### שלב 3: תיקון מיפוי שדות State
+- לכל סוכן, אוודא שה-detail panel מציג את השדות הנכונים מתוך ה-state שלו
+- אוסיף תצוגה מותאמת לסוכנים מרכזיים (CEO, News, VIX, Psychology) שמציגה את המסקנות בצורה קריאה ולא רק key-value גולמי
+
+### שלב 4: תיקון חיבורים בשאר הדפים
+- Pipeline, Decisions, Learning — יתעדכנו עם IDs נכונים
+- News.tsx — כבר תוקן חלקית, אוודא שה-agent_id תואם
+
+**קבצים:** `src/pages/Agents.tsx`, `src/pages/Pipeline.tsx`, `src/pages/News.tsx`, `src/hooks/use-trading-data.ts`, ואולי דפים נוספים לפי מה שיתגלה במסמך.
+
+## תוצאה
+כל סוכן בדשבורד יתאים בדיוק למה שהשרת כותב — IDs, שדות state, תכונות ומסקנות.
 
