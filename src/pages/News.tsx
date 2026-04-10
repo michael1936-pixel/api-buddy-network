@@ -1,4 +1,5 @@
-import { useNewsEventsLive, useAgentMemory, useMarketDataLive } from "@/hooks/use-trading-data";
+import { useState } from "react";
+import { useNewsAnalysis, useMarketDataLive } from "@/hooks/use-trading-data";
 
 const impactLabels: Record<string, string> = { critical: "קריטי", high: "גבוה", medium: "בינוני", low: "נמוך", noise: "רעש", major: "משמעותי", moderate: "בינוני", minor: "קטן", none: "אפסי" };
 const sentimentIcons: Record<string, string> = { very_negative: "🔴", negative: "🟠", neutral: "⚪", positive: "🟢", very_positive: "💚", bullish: "🟢", bearish: "🔴" };
@@ -14,6 +15,15 @@ const regimeBands = [
   { label: "פניקה", range: "35+", width: 15 },
 ];
 const bandColors = ["hsl(var(--trading-warning))", "hsl(var(--trading-profit))", "hsl(var(--trading-warning))", "#ff6b35", "hsl(var(--trading-loss))"];
+
+const spyImpactLabels: Record<string, string> = {
+  strong_bullish: "שורי חזק 🟢🟢", bullish: "שורי 🟢", neutral: "ניטרלי ⚪",
+  bearish: "דובי 🔴", strong_bearish: "דובי חזק 🔴🔴",
+};
+const vixImpactLabels: Record<string, string> = {
+  spike: "זינוק 📈📈", rise: "עלייה 📈", stable: "יציב ➡️",
+  drop: "ירידה 📉", crash: "צניחה 📉📉",
+};
 
 function getVixPct(v: number) {
   if (v < 12) return (v / 12) * 15;
@@ -31,28 +41,27 @@ function getVixRegime(v: number): string {
   return "panic";
 }
 
-export default function NewsPage() {
-  const { data: newsRaw = [] } = useNewsEventsLive(100);
-  const { data: agentMemory = [] } = useAgentMemory();
-  const { data: liveMarket = {} } = useMarketDataLive();
+function getSentimentColor(score: number | null): string {
+  if (score == null) return "hsl(var(--muted-foreground))";
+  if (score >= 50) return "hsl(var(--trading-profit))";
+  if (score >= 10) return "hsl(142, 71%, 45%)";
+  if (score >= -10) return "hsl(var(--muted-foreground))";
+  if (score >= -50) return "hsl(var(--trading-warning))";
+  return "hsl(var(--trading-loss))";
+}
 
-  const news = newsRaw as any[];
+export default function NewsPage() {
+  const { data: analysisData } = useNewsAnalysis(100);
+  const { data: liveMarket = {} } = useMarketDataLive();
+  const [expandedId, setExpandedId] = useState<number | null>(null);
+
+  const news = (analysisData?.news || []) as any[];
+  const agentStats = analysisData?.agentStats as any;
+  const analyzedNow = analysisData?.analyzedNow || 0;
+
   const vixLive = (liveMarket as any)?.VIX;
   const spyLive = (liveMarket as any)?.SPY;
 
-  // News agent from agent_memory — map to actual fields
-  const newsAgent = agentMemory.find((m: any) => m.agent_id === "news_research" || m.agent_id === "newsResearch" || m.agent_id === "news");
-  const newsState = newsAgent?.state as any || {};
-  const totalPatterns = newsState.totalPatterns || 0;
-  const lastResearch = newsState.lastResearch;
-  const newsConclusions = newsState.conclusions || {};
-  const newsReasoning = totalPatterns > 0
-    ? `${totalPatterns} דפוסים נלמדו`
-    : lastResearch
-      ? `סריקה אחרונה: ${new Date(lastResearch).toLocaleString("he-IL", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}`
-      : "ממתין לסריקת חדשות ראשונה";
-
-  // VIX from live market data
   const vixCurrent = vixLive?.close || 0;
   const vixPrev = vixLive?.prev_close || vixCurrent;
   const vixChangePct = vixPrev > 0 ? ((vixCurrent - vixPrev) / vixPrev) * 100 : 0;
@@ -63,7 +72,6 @@ export default function NewsPage() {
   const vrc = regimeColors[vixRegime] || "hsl(var(--muted-foreground))";
   const vixTimestamp = vixLive?.timestamp;
 
-  // SPY from live market data
   const spyCurrent = spyLive?.close || 0;
   const spyPrev = spyLive?.prev_close || spyCurrent;
   const spyChangePct = spyPrev > 0 ? ((spyCurrent - spyPrev) / spyPrev) * 100 : 0;
@@ -72,37 +80,76 @@ export default function NewsPage() {
   const spyVolume = spyLive?.volume || 0;
   const spyTimestamp = spyLive?.timestamp;
 
-  // Risk level derived from news conclusions or patterns
-  const riskLevel = newsConclusions.riskLevel || (totalPatterns > 5 ? "medium" : "none");
-  const riskLabels: Record<string, string> = { extreme: "קריטי", high: "גבוה", medium: "בינוני", low: "נמוך", none: "אין" };
-  const riskColor = riskLevel === "none" ? "hsl(var(--muted-foreground))" : riskLevel === "low" ? "hsl(var(--trading-profit))" : riskLevel === "high" || riskLevel === "extreme" ? "hsl(var(--trading-loss))" : "hsl(var(--trading-warning))";
+  // Agent stats
+  const totalAnalyzed = agentStats?.total_analyzed || 0;
+  const patterns = agentStats?.patterns || [];
+  const keyLearnings = agentStats?.key_learnings || [];
+  const lastAnalysis = agentStats?.last_analysis;
+
+  const analyzedNews = news.filter((n: any) => n.analyzed_at);
+  const withReactions = news.filter((n: any) => n.actual_spy_1h != null);
 
   const formatVol = (v: number) => v >= 1e6 ? `${(v / 1e6).toFixed(1)}M` : v >= 1e3 ? `${(v / 1e3).toFixed(0)}K` : String(v);
 
   return (
     <div className="space-y-4">
       {/* News Agent Header */}
-      <div className="surface-card" style={{ borderColor: riskColor + "40" }}>
+      <div className="surface-card" style={{ borderColor: "hsl(var(--primary) / 0.3)" }}>
         <div className="p-[18px]">
           <div className="flex justify-between items-center mb-3.5">
             <div className="flex items-center gap-3">
-              <div className="w-12 h-12 rounded-[14px] flex items-center justify-center text-2xl" style={{ background: riskColor + "15" }}>📰</div>
+              <div className="w-12 h-12 rounded-[14px] flex items-center justify-center text-2xl" style={{ background: "hsl(var(--primary) / 0.12)" }}>🧠</div>
               <div>
-                <div className="text-lg font-extrabold">סוכן מודיעין חדשות</div>
-                <div className="text-xs text-muted-foreground mt-0.5">{newsReasoning}</div>
+                <div className="text-lg font-extrabold">סוכן חדשות AI</div>
+                <div className="text-xs text-muted-foreground mt-0.5">
+                  {totalAnalyzed > 0
+                    ? `${totalAnalyzed} חדשות נותחו | ${patterns.length} דפוסים זוהו`
+                    : "ממתין לניתוח ראשון..."}
+                  {analyzedNow > 0 && <span className="text-primary mr-1"> • נותחו {analyzedNow} חדשות עכשיו</span>}
+                </div>
               </div>
             </div>
             <div className="text-left">
-              <span className="badge-pill text-xs py-1 px-3.5" style={{ background: riskColor + "18", color: riskColor }}>
-                סיכון: {riskLabels[riskLevel] || "--"}
+              <span className="badge-pill text-xs py-1 px-3.5" style={{ background: "hsl(var(--primary) / 0.15)", color: "hsl(var(--primary))" }}>
+                {analyzedNews.length}/{news.length} נותחו
               </span>
-              {news.length > 0 && (
+              {lastAnalysis && (
                 <div className="text-[10px] text-muted-foreground mt-1">
-                  {news.length} אירועים
+                  ניתוח אחרון: {new Date(lastAnalysis).toLocaleString("he-IL", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}
                 </div>
               )}
             </div>
           </div>
+
+          {/* Agent Learning Stats */}
+          {totalAnalyzed > 0 && (
+            <div className="grid grid-cols-3 gap-2 mt-3">
+              <div className="text-center p-2 rounded-lg" style={{ background: 'hsl(var(--surface2))' }}>
+                <div className="font-mono text-sm font-bold text-foreground">{totalAnalyzed}</div>
+                <div className="text-[9px] text-muted-foreground">חדשות נותחו</div>
+              </div>
+              <div className="text-center p-2 rounded-lg" style={{ background: 'hsl(var(--surface2))' }}>
+                <div className="font-mono text-sm font-bold text-foreground">{patterns.length}</div>
+                <div className="text-[9px] text-muted-foreground">דפוסים</div>
+              </div>
+              <div className="text-center p-2 rounded-lg" style={{ background: 'hsl(var(--surface2))' }}>
+                <div className="font-mono text-sm font-bold text-foreground">{withReactions.length}</div>
+                <div className="text-[9px] text-muted-foreground">תגובות שוק</div>
+              </div>
+            </div>
+          )}
+
+          {/* Recent Patterns */}
+          {patterns.length > 0 && (
+            <div className="mt-3 p-2.5 rounded-lg" style={{ background: 'hsl(var(--surface2))' }}>
+              <div className="text-[10px] font-bold text-muted-foreground mb-1.5">🔍 דפוסים אחרונים:</div>
+              <div className="space-y-1">
+                {patterns.slice(-3).map((p: string, i: number) => (
+                  <div key={i} className="text-[11px] text-foreground">• {p}</div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       </div>
 
@@ -214,52 +261,119 @@ export default function NewsPage() {
         </div>
       </div>
 
-      {/* Recent News Events */}
+      {/* Recent News Events with AI Analysis */}
       <div className="surface-card">
         <div className="surface-card-head">
-          <span className="text-sm font-semibold">📰 אירועי חדשות אחרונים ({news.length})</span>
+          <span className="text-sm font-semibold">📰 אירועי חדשות + ניתוח AI ({news.length})</span>
         </div>
         {news.length === 0 ? (
           <div className="empty-state">
             <div className="empty-state-icon">📰</div>
             <div className="empty-state-text">אין אירועי חדשות</div>
-            <div className="empty-state-sub">הסוכן יתחיל לאסוף חדשות כשהשוק ייפתח</div>
+            <div className="empty-state-sub">הסוכן יתחיל לאסוף ולנתח חדשות בקרוב</div>
           </div>
         ) : (
           news.map((e: any) => {
             const ic = e.impact_level === "critical" || e.impact_level === "high" ? "hsl(var(--trading-loss))"
               : e.impact_level === "medium" ? "hsl(var(--trading-warning))" : "hsl(var(--muted-foreground))";
             const ts = e.timestamp ? new Date(e.timestamp).toLocaleString("he-IL", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) : "";
+            const isExpanded = expandedId === (e.id || e.event_id);
+            const hasAnalysis = !!e.ai_analysis;
+            const sentColor = getSentimentColor(e.ai_sentiment_score);
+
             return (
-              <div key={e.id || e.event_id} className="row-item items-start py-3 px-[18px]">
-                <span className="text-base mt-0.5">{sentimentIcons[e.sentiment] || "⚪"}</span>
-                <div className="flex-1 min-w-0">
-                  <div className="text-xs font-semibold leading-relaxed">{e.headline || e.summary || "--"}</div>
-                  <div className="flex gap-1.5 flex-wrap mt-1">
-                    <span className="badge-pill" style={{ background: ic + "18", color: ic }}>
-                      {impactLabels[e.impact_level] || e.impact_level}
-                    </span>
-                    <span className="badge-pill" style={{ background: 'hsl(var(--surface2))', color: 'hsl(var(--muted-foreground))' }}>
-                      {e.category}
-                    </span>
-                    {e.source && <span className="text-[9px] text-muted-foreground">{e.source}</span>}
-                    <span className="text-[9px] text-muted-foreground">{ts}</span>
-                  </div>
-                  {e.affected_symbols?.length > 0 && (
-                    <div className="flex gap-1 mt-1 flex-wrap">
-                      {e.affected_symbols.slice(0, 8).map((s: string) => (
-                        <span key={s} className="font-mono text-[9px] px-1.5 py-0.5 rounded" style={{ background: 'hsla(217,91%,60%,0.12)', color: 'hsl(var(--primary))' }}>
-                          {s}
+              <div
+                key={e.id || e.event_id}
+                className="py-3 px-[18px] border-b border-border/30 last:border-b-0 cursor-pointer hover:bg-muted/20 transition-colors"
+                onClick={() => setExpandedId(isExpanded ? null : (e.id || e.event_id))}
+              >
+                <div className="flex gap-2.5 items-start">
+                  <span className="text-base mt-0.5">{sentimentIcons[e.sentiment] || "⚪"}</span>
+                  <div className="flex-1 min-w-0">
+                    <div className="text-xs font-semibold leading-relaxed">{e.headline || e.summary || "--"}</div>
+                    <div className="flex gap-1.5 flex-wrap mt-1 items-center">
+                      <span className="badge-pill" style={{ background: ic + "18", color: ic }}>
+                        {impactLabels[e.impact_level] || e.impact_level}
+                      </span>
+                      <span className="badge-pill" style={{ background: 'hsl(var(--surface2))', color: 'hsl(var(--muted-foreground))' }}>
+                        {e.category}
+                      </span>
+                      {hasAnalysis && (
+                        <span className="badge-pill" style={{ background: sentColor + "18", color: sentColor }}>
+                          🧠 {e.ai_sentiment_score > 0 ? "+" : ""}{e.ai_sentiment_score}
                         </span>
-                      ))}
+                      )}
+                      {e.source && <span className="text-[9px] text-muted-foreground">{e.source}</span>}
+                      <span className="text-[9px] text-muted-foreground">{ts}</span>
+                      {hasAnalysis && !isExpanded && (
+                        <span className="text-[9px] text-primary cursor-pointer">▼ מחשבות הסוכן</span>
+                      )}
                     </div>
-                  )}
-                  {e.actual_spy_1h != null && (
-                    <div className="text-[10px] text-muted-foreground mt-1">
-                      תגובה בפועל: SPY {e.actual_spy_1h >= 0 ? "+" : ""}{e.actual_spy_1h.toFixed(2)}%
-                      {e.actual_vix_change != null && ` | VIX ${e.actual_vix_change >= 0 ? "+" : ""}${e.actual_vix_change.toFixed(1)}`}
-                    </div>
-                  )}
+
+                    {e.affected_symbols?.length > 0 && (
+                      <div className="flex gap-1 mt-1 flex-wrap">
+                        {e.affected_symbols.slice(0, 8).map((s: string) => (
+                          <span key={s} className="font-mono text-[9px] px-1.5 py-0.5 rounded" style={{ background: 'hsla(217,91%,60%,0.12)', color: 'hsl(var(--primary))' }}>
+                            {s}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* Expanded: AI Agent Thoughts */}
+                    {isExpanded && hasAnalysis && (
+                      <div className="mt-2.5 p-3 rounded-lg space-y-2" style={{ background: 'hsl(var(--surface2))' }}>
+                        <div className="text-[11px] font-bold text-primary">🧠 מחשבות הסוכן:</div>
+                        <div className="text-[11px] text-foreground leading-relaxed">{e.ai_analysis}</div>
+
+                        <div className="grid grid-cols-2 gap-2 mt-2">
+                          <div className="p-2 rounded" style={{ background: 'hsl(var(--background))' }}>
+                            <div className="text-[9px] text-muted-foreground">תחזית SPY</div>
+                            <div className="text-[11px] font-semibold">{spyImpactLabels[e.predicted_spy_impact] || e.predicted_spy_impact || "--"}</div>
+                          </div>
+                          <div className="p-2 rounded" style={{ background: 'hsl(var(--background))' }}>
+                            <div className="text-[9px] text-muted-foreground">תחזית VIX</div>
+                            <div className="text-[11px] font-semibold">{vixImpactLabels[e.predicted_vix_impact] || e.predicted_vix_impact || "--"}</div>
+                          </div>
+                        </div>
+
+                        {/* Actual vs Predicted */}
+                        {e.actual_spy_1h != null && (
+                          <div className="p-2 rounded border" style={{ background: 'hsl(var(--background))', borderColor: 'hsl(var(--border))' }}>
+                            <div className="text-[9px] font-bold text-muted-foreground mb-1">📊 תחזית מול מציאות:</div>
+                            <div className="flex gap-3">
+                              <div>
+                                <span className="text-[9px] text-muted-foreground">SPY בפועל: </span>
+                                <span className="font-mono text-[11px] font-bold" style={{ color: e.actual_spy_1h >= 0 ? "hsl(var(--trading-profit))" : "hsl(var(--trading-loss))" }}>
+                                  {e.actual_spy_1h >= 0 ? "+" : ""}{e.actual_spy_1h.toFixed(2)}%
+                                </span>
+                              </div>
+                              {e.actual_vix_change != null && (
+                                <div>
+                                  <span className="text-[9px] text-muted-foreground">VIX: </span>
+                                  <span className="font-mono text-[11px] font-bold" style={{ color: e.actual_vix_change >= 0 ? "hsl(var(--trading-loss))" : "hsl(var(--trading-profit))" }}>
+                                    {e.actual_vix_change >= 0 ? "+" : ""}{e.actual_vix_change.toFixed(1)}
+                                  </span>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        )}
+
+                        <div className="text-[9px] text-muted-foreground">
+                          נותח ב: {e.analyzed_at ? new Date(e.analyzed_at).toLocaleString("he-IL", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) : ""}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Show market reaction even when collapsed */}
+                    {!isExpanded && e.actual_spy_1h != null && (
+                      <div className="text-[10px] text-muted-foreground mt-1">
+                        תגובה בפועל: SPY {e.actual_spy_1h >= 0 ? "+" : ""}{e.actual_spy_1h.toFixed(2)}%
+                        {e.actual_vix_change != null && ` | VIX ${e.actual_vix_change >= 0 ? "+" : ""}${e.actual_vix_change.toFixed(1)}`}
+                      </div>
+                    )}
+                  </div>
                 </div>
               </div>
             );

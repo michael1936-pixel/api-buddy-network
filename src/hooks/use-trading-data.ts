@@ -97,6 +97,29 @@ export function useNewsEventsLive(limit = 50) {
   });
 }
 
+export function useNewsAnalysis(limit = 100) {
+  return useQuery({
+    queryKey: ["news_analysis", String(limit)],
+    queryFn: async () => {
+      try {
+        const { data, error } = await supabase.functions.invoke("analyze-news");
+        if (error) throw error;
+        return {
+          news: (data?.news || []).slice(0, limit),
+          analyzedNow: data?.analyzed_now || 0,
+          agentStats: data?.agent_stats || null,
+        };
+      } catch (e) {
+        console.warn("analyze-news failed, falling back to DB:", e);
+        const { data, error } = await supabase.from("news_events").select("*").order("timestamp", { ascending: false }).limit(limit);
+        if (error) throw error;
+        return { news: data || [], analyzedNow: 0, agentStats: null };
+      }
+    },
+    refetchInterval: 60000,
+  });
+}
+
 export function useNewsEvents(limit = 50) {
   return useTableQuery(
     ["news_events", String(limit)],
