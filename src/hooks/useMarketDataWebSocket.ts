@@ -1,3 +1,4 @@
+// @refresh reset
 import { useState, useEffect, useRef, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useMarketDataLive } from "@/hooks/use-trading-data";
