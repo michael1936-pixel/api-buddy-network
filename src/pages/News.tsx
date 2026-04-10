@@ -132,9 +132,9 @@ export default function NewsPage() {
                 </>
               )}
             </div>
-            {vixRow && (
+            {vixTimestamp && (
               <div className="text-[10px] text-muted-foreground">
-                עדכון: {new Date(vixRow.timestamp).toLocaleString("he-IL", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}
+                עדכון: {new Date(vixTimestamp).toLocaleString("he-IL", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}
               </div>
             )}
           </div>
@@ -170,9 +170,9 @@ export default function NewsPage() {
                 <div className="text-[9px] text-muted-foreground">נמוך</div>
               </div>
             </div>
-            {spyRow && (
+            {spyTimestamp && (
               <div className="text-[10px] text-muted-foreground mt-2">
-                עדכון: {new Date(spyRow.timestamp).toLocaleString("he-IL", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}
+                עדכון: {new Date(spyTimestamp).toLocaleString("he-IL", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}
               </div>
             )}
           </div>
