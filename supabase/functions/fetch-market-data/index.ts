@@ -22,7 +22,7 @@ Deno.serve(async (req) => {
 
     const results: Record<string, any> = {}
 
-    // SPY + VIXY (VIX ETF proxy) from Twelve Data in one call
+    // SPY + VIXY from Twelve Data
     const symbols = ['SPY', 'VIXY']
     const url = `https://api.twelvedata.com/time_series?symbol=${symbols.join(',')}&interval=1min&outputsize=2&apikey=${TWELVE_DATA_KEY}`
     const resp = await fetch(url)
@@ -44,7 +44,8 @@ Deno.serve(async (req) => {
       }
     }
 
-    // Get VIX from DB (Railway server writes it)
+    // Try to get real VIX from DB (written by Railway server)
+    let vixFromDb = false
     if (SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY) {
       const sb = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
       const { data: vixRows } = await sb.from('market_data')
@@ -53,23 +54,39 @@ Deno.serve(async (req) => {
       if (vixRows && vixRows.length > 0) {
         const latest = vixRows[0]
         const prev = vixRows[1] || latest
-        results.VIX = {
-          symbol: 'VIX', open: latest.open, high: latest.high,
-          low: latest.low, close: latest.close, volume: latest.volume,
-          timestamp: latest.timestamp, prev_close: prev.close,
+        const ageMs = Date.now() - new Date(latest.timestamp).getTime()
+        // Use DB VIX if it's less than 10 minutes old
+        if (ageMs < 10 * 60 * 1000) {
+          results.VIX = {
+            symbol: 'VIX', open: latest.open, high: latest.high,
+            low: latest.low, close: latest.close, volume: latest.volume,
+            timestamp: latest.timestamp, prev_close: prev.close,
+            source: 'db',
+          }
+          vixFromDb = true
         }
       }
 
       // Save SPY to DB
       const spyR = results.SPY
       if (spyR && !spyR.error) {
-        await sb.from('market_data').insert({
+        await sb.from('market_data').upsert({
           symbol: 'SPY', open: spyR.open, high: spyR.high,
           low: spyR.low, close: spyR.close, volume: spyR.volume,
           timestamp: new Date(spyR.timestamp).toISOString(), interval: '1min',
-        }).then(({ error }) => {
-          if (error) console.error('DB insert error for SPY:', error.message)
-        })
+        }, { onConflict: 'symbol,interval,timestamp', ignoreDuplicates: true })
+          .then(({ error }) => {
+            if (error) console.error('DB upsert error for SPY:', error.message)
+          })
+      }
+    }
+
+    // Fallback: use VIXY as VIX proxy if no DB data
+    if (!vixFromDb && results.VIXY && !results.VIXY.error) {
+      results.VIX = {
+        ...results.VIXY,
+        symbol: 'VIX',
+        source: 'vixy_proxy',
       }
     }
 
