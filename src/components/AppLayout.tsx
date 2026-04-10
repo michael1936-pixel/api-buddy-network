@@ -1,6 +1,7 @@
-import { ReactNode, useState, useEffect } from "react";
+import { ReactNode, useState, useEffect, useMemo } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { cn } from "@/lib/utils";
+import { useMarketDataLive } from "@/hooks/use-trading-data";
 
 const navItems = [
   { to: "/", label: "סקירה" },
