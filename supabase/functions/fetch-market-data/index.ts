@@ -5,6 +5,7 @@ const corsHeaders = {
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.49.1'
 
 const TWELVE_DATA_KEY = Deno.env.get('TWELVE_DATA_API_KEY') || ''
+const FINNHUB_KEY = Deno.env.get('FINNHUB_API_KEY') || ''
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL') || ''
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || ''
 
@@ -20,44 +21,43 @@ Deno.serve(async (req) => {
       })
     }
 
-    const symbols = [
-      { query: 'SPY', name: 'SPY' },
-      { query: 'VIX', name: 'VIX' },
-      { query: 'CBOE:VIX', name: 'VIX' },
-    ]
     const results: Record<string, any> = {}
 
-    for (const { query, name } of symbols) {
-      if (results[name] && !results[name].error) continue
-      const url = `https://api.twelvedata.com/time_series?symbol=${encodeURIComponent(query)}&interval=1min&outputsize=2&apikey=${TWELVE_DATA_KEY}`
+    // SPY from Twelve Data
+    {
+      const url = `https://api.twelvedata.com/time_series?symbol=SPY&interval=1min&outputsize=2&apikey=${TWELVE_DATA_KEY}`
       const resp = await fetch(url)
       const data = await resp.json()
-
-      if (data.status === 'error') {
-        console.error(`Twelve Data error for ${name}:`, data.message)
-        results[name] = { error: data.message }
-        continue
+      if (data.status === 'error' || !data.values?.length) {
+        results.SPY = { error: data.message || 'No data' }
+      } else {
+        const latest = data.values[0]
+        const prev = data.values[1] || latest
+        results.SPY = {
+          symbol: 'SPY', open: parseFloat(latest.open), high: parseFloat(latest.high),
+          low: parseFloat(latest.low), close: parseFloat(latest.close),
+          volume: parseInt(latest.volume || '0'), timestamp: latest.datetime,
+          prev_close: parseFloat(prev.close),
+        }
       }
+    }
 
-      const values = data.values || []
-      if (values.length === 0) {
-        results[name] = { error: 'No data returned' }
-        continue
+    // VIX from Finnhub quote endpoint
+    if (FINNHUB_KEY) {
+      const url = `https://finnhub.io/api/v1/quote?symbol=^VIX&token=${FINNHUB_KEY}`
+      const resp = await fetch(url)
+      const q = await resp.json()
+      if (q && q.c > 0) {
+        results.VIX = {
+          symbol: 'VIX', open: q.o, high: q.h, low: q.l, close: q.c,
+          volume: 0, timestamp: new Date(q.t * 1000).toISOString(),
+          prev_close: q.pc,
+        }
+      } else {
+        // Fallback: try ^GSPC index or just report error
+        results.VIX = { error: 'VIX quote unavailable' }
       }
-
-      const latest = values[0]
-      const prev = values[1] || latest
-
-      results[name] = {
-        symbol: name,
-        open: parseFloat(latest.open),
-        high: parseFloat(latest.high),
-        low: parseFloat(latest.low),
-        close: parseFloat(latest.close),
-        volume: parseInt(latest.volume || '0'),
-        timestamp: latest.datetime,
-        prev_close: parseFloat(prev.close),
-      }
+    }
     }
 
     // Write to market_data in background (don't block response)
