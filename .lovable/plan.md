@@ -1,41 +1,64 @@
 
 
-# שליפת נתונים בזמן אמת — Edge Functions + Frontend Polling
+# סוכן חדשות חכם — ניתוח AI + קורלציה עם שוק
 
-## הגישה
-במקום cron כל 15 דקות, נבנה **edge functions שהפרונטאנד קורא להן ישירות** עם רענון כל 30 שניות. זה נותן נתונים כמעט בזמן אמת.
+## מצב נוכחי
+- 53 חדשות ב-DB (יומיים אחרונים בלבד)
+- 3 נקודות SPY, 3 נקודות VIX
+- **אין ניתוח AI** על אף חדשה — אין מסקנות, אין קורלציה עם שוק
+- שדות `actual_spy_1h`, `actual_vix_change` ריקים לגמרי
 
 ## מה נבנה
 
-### 1. Edge Function: `fetch-market-data`
-- קורא ל-**Twelve Data API** (`/time_series?symbol=SPY,VIX&interval=1min&outputsize=1`)
-- מחזיר מחירים עדכניים ישירות לפרונטאנד
-- גם כותב ל-`market_data` לשמירת היסטוריה
+### שלב 1: הוספת שדות ניתוח AI לטבלת news_events
+Migration שמוסיף:
+- `ai_analysis` (text) — מסקנות הסוכן על החדשה
+- `ai_sentiment_score` (numeric) — ציון סנטימנט -100 עד +100
+- `predicted_spy_impact` (text) — תחזית השפעה על SPY
+- `predicted_vix_impact` (text) — תחזית השפעה על VIX
+- `analyzed_at` (timestamptz) — מתי נותח
 
-### 2. Edge Function: `fetch-news`
-- קורא ל-**Finnhub API** (`/api/v1/news?category=general`)
-- מחזיר חדשות ישירות לפרונטאנד
-- כותב ל-`news_events` (מסנן כפילויות לפי `event_id`)
+### שלב 2: Edge Function — `analyze-news`
+פונקציה שעושה 3 דברים:
 
-### 3. עדכון Frontend
-- `useMarketData` → קורא ל-edge function כל **30 שניות** במקום ישירות מהטבלה
-- `useNewsEvents` → קורא ל-edge function כל **60 שניות**
-- Fallback: אם ה-edge function נכשל, שולף מהטבלה
+**א. שליפת חדשות חדשות מ-Finnhub** (כמו עכשיו)
 
-## דרישות מוקדמות — API Keys
-צריך לשמור 2 secrets:
-1. **TWELVE_DATA_API_KEY** — מ-Twelve Data
-2. **FINNHUB_API_KEY** — מ-Finnhub
+**ב. קורלציה עם שוק** — לכל חדשה ישנה (שעברה שעה+), שולף את נתוני SPY/VIX מאותו רגע ומשלים `actual_spy_1h` ו-`actual_vix_change`
+
+**ג. ניתוח AI** — שולח כל חדשה חדשה ל-Lovable AI (Gemini 2.5 Flash) עם:
+- כותרת + תקציר החדשה
+- נתוני SPY/VIX נוכחיים
+- היסטוריית מסקנות קודמות (למידה מצטברת)
+- מבקש: מסקנה, תחזית השפעה, ציון סנטימנט, הסבר
+
+**ד. עדכון agent_memory** — כותב סיכום מצטבר: כמה חדשות נותחו, דפוסים שזוהו, מסקנות כלליות
+
+### שלב 3: Frontend Polling
+- הפרונטאנד קורא ל-`analyze-news` כל **60 שניות**
+- כל חדשה מציגה את ניתוח ה-AI מתחת לכותרת
+- כרטיס סוכן מראה סטטיסטיקות: כמה נותח, דפוסים, מסקנות
+
+### שלב 4: עדכון UI — News.tsx
+- כל חדשה מציגה **"מחשבות הסוכן"** — הניתוח, התחזית, וההסבר
+- בועה מתרחבת עם קליק שמראה את כל הנמקת ה-AI
+- אם יש תגובת שוק בפועל — השוואה בין תחזית למציאות
+- כרטיס סוכן עליון מציג: סה"כ דפוסים, דיוק תחזיות, מסקנות מרכזיות
+
+## לגבי "מ-2008"
+Finnhub API נותן רק חדשות אחרונות (לא היסטוריות מ-2008). הסוכן ילמד **מהרגע הזה קדימה** — כל חדשה שנכנסת תנותח, תתועד עם תגובת השוק, והידע יצטבר לאורך זמן. ככל שיעבור זמן — יהיו לו יותר דפוסים ומסקנות.
 
 ## קבצים
 
 | קובץ | פעולה |
 |-------|--------|
-| `supabase/functions/fetch-market-data/index.ts` | חדש |
-| `supabase/functions/fetch-news/index.ts` | חדש |
-| `src/hooks/use-trading-data.ts` | עדכון — hooks חדשים שקוראים ל-edge functions |
-| `src/pages/News.tsx` | עדכון — שימוש ב-hooks החדשים |
+| Migration | הוספת שדות AI ל-`news_events` |
+| `supabase/functions/analyze-news/index.ts` | חדש — ניתוח AI + קורלציה |
+| `src/hooks/use-trading-data.ts` | עדכון hook לקריאה ל-analyze-news |
+| `src/pages/News.tsx` | עדכון UI — הצגת מחשבות סוכן |
 
-## תוצאה
-SPY, VIX וחדשות יתעדכנו כל 30-60 שניות בזמן אמת, ישירות מ-Twelve Data ו-Finnhub.
+## פרטים טכניים
+- AI: Lovable AI Gateway עם `google/gemini-2.5-flash` (לא צריך API key נוסף)
+- הניתוח רץ רק על חדשות שעדיין לא נותחו (`analyzed_at IS NULL`)
+- קורלציה: מחפש ב-`market_data` את הרשומה הקרובה ביותר לזמן החדשה ושעה אחרי
+- למידה מצטברת: כל 50 חדשות — סיכום דפוסים נשמר ב-`agent_memory`
 
