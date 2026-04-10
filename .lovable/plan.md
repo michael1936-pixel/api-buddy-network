@@ -1,23 +1,42 @@
 
 
-# תיקון דיליי בנתוני VIX בדף החדשות
+# נתוני שוק בזמן אמת עם WebSocket של Twelve Data
 
-## הבעיה
-- **SPY**: מגיע ישירות מ-Twelve Data API (דיליי של דקה — תקין)
-- **VIX**: מגיע מה-DB שהשרת ב-Railway כותב אליו **כל 5 דקות**. זה הדיליי שאתה רואה
+## המצב היום
+הנתונים נשלפים כל 30 שניות דרך REST API (polling). יש לך 8 חיבורי WebSocket בתוכנית Grow — אפשר לקבל עדכונים בזמן אמת (מיליוינות) במקום כל 30 שניות.
 
-ב-DB רואים שהנתונים של VIX מתעדכנים כל 5 דקות (14:25, 14:20, 14:15...) בזמן שהשוק פתוח. אין נתוני SPY בכלל ב-DB (רק VIX).
+## הבעיה הטכנית
+Edge functions הם stateless — לא יכולים להחזיק חיבור WebSocket פתוח. הפתרון: **חיבור WebSocket ישירות מהדפדפן** לשרתי Twelve Data.
 
 ## הפתרון
-לשנות את `fetch-market-data` edge function כך ש-VIX ייקרא **ישירות מ-Twelve Data API** במקום מה-DB — בדיוק כמו SPY.
 
-### שינוי ב-`supabase/functions/fetch-market-data/index.ts`:
-1. שנה את רשימת הסמלים מ-`['SPY', 'VIXY']` ל-`['SPY', 'VIXY', 'VIX']`
-2. VIX נתמך ב-Twelve Data כסמל ישיר (CBOE Volatility Index)
-3. אם Twelve Data מחזיר VIX — להשתמש בזה. אם לא (fallback) — לקרוא מה-DB כמו היום
-4. לשמור גם את VIX ל-DB (כמו SPY) כדי שהשרת ב-Railway לא יהיה המקור היחיד
+### 1. Edge function חדש: `get-ws-token`
+פונקציה קטנה שמחזירה את ה-API key לדפדפן (בצורה מאובטחת דרך edge function):
+- `supabase/functions/get-ws-token/index.ts`
+- מחזירה את `TWELVE_DATA_API_KEY` ללקוח
+
+### 2. Hook חדש: `useMarketDataWebSocket`
+- `src/hooks/useMarketDataWebSocket.ts`
+- מתחבר ל-`wss://ws.twelvedata.com/v1/quotes/price`
+- שולח subscribe ל-`SPY,VIX,VIXY` (3 מתוך 8 הסלוטים שלך)
+- מעדכן state בכל tick שמגיע (בזמן אמת)
+- reconnect אוטומטי אם החיבור נופל
+- fallback ל-`useMarketDataLive()` (REST) אם ה-WS נכשל
+
+### 3. עדכון דפים שמשתמשים בנתוני שוק
+- `News.tsx` — יחליף את `useMarketDataLive` ב-`useMarketDataWebSocket`
+- `AppLayout.tsx` — אותו דבר לסרגל העליון
 
 ### תוצאה צפויה
-- VIX יתעדכן כל 30 שניות (כמו SPY) במקום כל 5 דקות
-- Fallback ל-DB אם Twelve Data לא מחזיר VIX
+- VIX, SPY, VIXY יתעדכנו **בזמן אמת** (כל שינוי מחיר)
+- נשארים 5 סלוטי WS פנויים למניות אחרות בעתיד
+- Fallback אוטומטי ל-REST אם ה-WebSocket לא זמין
+
+### קבצים
+| קובץ | פעולה |
+|-------|-------|
+| `supabase/functions/get-ws-token/index.ts` | חדש |
+| `src/hooks/useMarketDataWebSocket.ts` | חדש |
+| `src/pages/News.tsx` | עדכון hook |
+| `src/components/AppLayout.tsx` | עדכון hook |
 
