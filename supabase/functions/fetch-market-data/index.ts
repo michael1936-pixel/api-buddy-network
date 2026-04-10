@@ -20,17 +20,22 @@ Deno.serve(async (req) => {
       })
     }
 
-    const symbols = ['SPY', 'VIX']
+    const symbols = [
+      { query: 'SPY', name: 'SPY' },
+      { query: 'VIX', name: 'VIX' },
+      { query: 'CBOE:VIX', name: 'VIX' },
+    ]
     const results: Record<string, any> = {}
 
-    for (const symbol of symbols) {
-      const url = `https://api.twelvedata.com/time_series?symbol=${symbol}&interval=1min&outputsize=2&apikey=${TWELVE_DATA_KEY}`
+    for (const { query, name } of symbols) {
+      if (results[name] && !results[name].error) continue
+      const url = `https://api.twelvedata.com/time_series?symbol=${encodeURIComponent(query)}&interval=1min&outputsize=2&apikey=${TWELVE_DATA_KEY}`
       const resp = await fetch(url)
       const data = await resp.json()
 
       if (data.status === 'error') {
-        console.error(`Twelve Data error for ${symbol}:`, data.message)
-        results[symbol] = { error: data.message }
+        console.error(`Twelve Data error for ${name}:`, data.message)
+        results[name] = { error: data.message }
         continue
       }
 
