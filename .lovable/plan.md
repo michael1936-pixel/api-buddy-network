@@ -1,82 +1,39 @@
 
-# מצב נוכחי
-לא, זה עדיין לא מתוקן. לפי הלוגים, ה-WebSocket מתחבר אבל ה-subscribe עצמו נכשל בכל פעם:
-```text
-[WS] Subscribe status: error
-fails: SPY / VIX / VIXY
+
+# תיקון נתונים תקועים — באג במיזוג REST
+
+## הבעיה
+ה-Edge Function מחזיר נתונים טריים (15:56 UTC = 18:56 ישראל), אבל ה-UI מציג 18:54 כי:
+
+1. `useEffect` בשורה 207 מכניס נתוני REST ל-`data` state **פעם אחת** (בגלל `!updated[sym]?.source`)
+2. בשורה 237: `mergedData = { ...restData, ...data }` — ה-`data` הישן **דורס** את `restData` החדש
+3. תוצאה: הנתון הראשון שנכנס ל-state נשאר לנצח
+
+## הפתרון
+שני שינויים ב-`src/hooks/useMarketDataWebSocket.ts`:
+
+### 1. להסיר את ה-seeding של REST ל-data state
+ה-`useEffect` בשורות 207-235 מיותר. ה-REST data כבר זמין דרך `restData` ומגיע דרך ה-merge.
+
+### 2. לתקן את ה-merge כך ש-WS דורס REST, אבל לא להפך
+```typescript
+// REST as base, WS data overrides only if source === "ws"
+const wsEntries = Object.fromEntries(
+  Object.entries(data).filter(([_, v]) => v.source === "ws")
+);
+const mergedData = { ...((restData as MarketDataMap) || {}), ...wsEntries };
 ```
-כלומר אין בכלל stream חי, והמערכת נופלת חזרה ל-REST.
 
-בנוסף, ה"זמן עדכון" שמוצג לך מטעה:
-- `fetch-market-data` מחזיר ל-SPY/VIXY `timestamp` כטקסט גולמי כמו `2026-04-10 11:34:00`
-- ה-UI עושה `new Date(...)` ומציג אותו ב-`he-IL`
-- בלי timezone מפורש, הדפדפן מפרש את הזמן לא נכון, ולכן אתה רואה `11:28` וחושב שהמערכת תקועה
+כך כל poll חדש של REST יתעדכן מיד, ו-WS ידרוס רק כשיש באמת tick חי.
 
-## מה צריך לתקן עכשיו
+### 3. לשמור prev_close מ-REST ב-ref בלבד
+`firstPriceRef` ימשיך להתעדכן מ-REST לצורך חישוב שינוי, בלי לגעת ב-`data` state.
 
-### 1. ניסיון אחרון נכון ל-WebSocket
-הקוד הנוכחי שולח:
-```json
-"SPY:NYSE,VIX:CBOE,VIXY:NYSE"
-```
-לפי הדוקומנטציה של Twelve Data, פורמט ה-subscribe צריך להיות פשוט:
-```json
-{ "action": "subscribe", "params": { "symbols": "SPY,VIX,VIXY" } }
-```
-אני אעדכן את ה-hook לפורמט הזה ואבדוק subscribe-status נקי.
-
-### 2. אם גם זה נכשל — לעצור להעמיד פנים שזה זמן אמת
-אם גם בפורמט הפשוט כל הסמלים נכשלים, המסקנה היא שהחשבון שלך לא מאפשר WS לסמלים האלה כרגע (או מאפשר רק trial symbols).
-במצב כזה אני אעשה:
-- הפסקת reconnect אינסופי
-- מעבר מסודר ל-REST
-- badge ברור של `Delayed / REST`
-- לא להציג `⚡ WS` לפני שיש subscribe מוצלח בפועל
-
-### 3. לתקן את ה-timestamp
-ב-`fetch-market-data` צריך להחזיר timestamps תקינים ב-ISO עם timezone, ולא את `latest.datetime` הגולמי.
-כך ה-UI יציג זמן אמיתי ולא `11:28` תקוע.
-
-### 4. לשפר את fallback כדי שירגיש הרבה יותר חי
-גם אם WS לא זמין, ה-fallback הנוכחי הוא `time_series` של 1 דקה, ולכן הוא לעולם לא יהיה tick-by-tick.
-אני אשפר את fallback ל:
-- polling מהיר יותר בזמן שהשוק פתוח
-- עדיפות ל-endpoint של latest price / quote במקום candle של דקה, אם הוא נתמך לסמלים האלה
-- חיווי כמה זמן עבר מהעדכון האחרון
-
-## קבצים לעדכון
-| קובץ | שינוי |
-|---|---|
-| `src/hooks/useMarketDataWebSocket.ts` | מעבר ל-`SPY,VIX,VIXY`, הצלחת WS רק אחרי subscribe מוצלח, עצירת reconnect שגוי |
-| `supabase/functions/fetch-market-data/index.ts` | החזרת timestamp תקין עם timezone, ושיפור מקור הנתון ל-fallback |
-| `src/hooks/use-trading-data.ts` | polling מהיר יותר/חכם יותר בזמן שוק פתוח |
-| `src/pages/News.tsx` | הצגת זמן עדכון אמיתי + age indicator + badge אמין |
-| `src/components/AppLayout.tsx` | badge מצב נתונים אמין גם בסרגל העליון |
+## קובץ אחד לעדכון
+`src/hooks/useMarketDataWebSocket.ts`
 
 ## תוצאה צפויה
-יש שני תרחישים אפשריים:
+- כל 15 שניות ה-timestamp יתעדכן עם נתון טרי מה-REST
+- אם WS יעבוד — ידרוס בזמן אמת
+- לא עוד "18:54 תקוע"
 
-### תרחיש A — ה-WS עובד בפורמט הפשוט
-- SPY / VIX / VIXY יתעדכנו בזמן אמת
-- זמן העדכון יוצג נכון
-- ה-badge יעבור ל-`⚡ WS`
-
-### תרחיש B — ה-WS עדיין נדחה
-- נפסיק reconnect מיותר
-- נעבור ל-REST מהיר ואמין יותר
-- זמן העדכון יוצג נכון
-- יוצג בבירור שזה `REST / Delayed`
-- תדע שהחסם הוא ברמת ספק הנתונים/תוכנית, לא בבאג React או Context
-
-## פרטים טכניים
-- ה-Context provider כבר קיים, אז בעיית ה"חיבור הכפול" כנראה כבר נפתרה
-- הבעיה המרכזית עכשיו היא `subscribe-status: error` לכל הסמלים
-- הקוד הנוכחי מסמן `connected` כבר ב-`onopen`, אבל זה מוקדם מדי; צריך לסמן realtime רק אחרי subscribe מוצלח
-- ה-REST הנוכחי מחזיר זמן Candle של ניו-יורק/Exchange בלי timezone מפורש, וזה מה שיוצר את הבלבול בצילום
-
-## סדר עבודה
-1. להחליף subscribe ל-`SPY,VIX,VIXY`
-2. לקשור `isRealtime` רק ל-subscribe מוצלח
-3. לעצור reconnect אם כל הסמלים נדחו
-4. לתקן timestamps ב-backend
-5. לשפר polling/fallback ולהציג age של הנתון
