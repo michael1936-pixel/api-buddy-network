@@ -1,6 +1,7 @@
-import { ReactNode, useState, useEffect } from "react";
+import { ReactNode, useState, useEffect, useMemo } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { cn } from "@/lib/utils";
+import { useMarketDataLive } from "@/hooks/use-trading-data";
 
 const navItems = [
   { to: "/", label: "סקירה" },
@@ -15,12 +16,28 @@ const navItems = [
 
 export default function AppLayout({ children }: { children: ReactNode }) {
   const location = useLocation();
+  const { data: marketData } = useMarketDataLive();
   const [clock, setClock] = useState("");
 
   useEffect(() => {
     const t = setInterval(() => setClock(new Date().toLocaleTimeString("he-IL")), 1000);
     return () => clearInterval(t);
   }, []);
+
+  const vix = marketData?.VIX?.close;
+  const spy = marketData?.SPY?.close;
+  const spyPrev = marketData?.SPY?.prev_close;
+  const spyChange = spy && spyPrev ? ((spy - spyPrev) / spyPrev * 100) : null;
+  const spyUp = spyChange !== null ? spyChange >= 0 : null;
+
+  const isMarketOpen = useMemo(() => {
+    const now = new Date();
+    const utcH = now.getUTCHours();
+    const utcM = now.getUTCMinutes();
+    const mins = utcH * 60 + utcM;
+    const day = now.getUTCDay();
+    return day >= 1 && day <= 5 && mins >= 14 * 60 + 30 && mins < 21 * 60;
+  }, [clock]);
 
   return (
     <div className="min-h-screen">
@@ -56,11 +73,19 @@ export default function AppLayout({ children }: { children: ReactNode }) {
 
           {/* Status info (desktop) */}
           <div className="hidden md:flex items-center gap-3.5 text-xs mr-auto">
-            <span className="font-mono text-trading-profit">VIX --</span>
+            <span className={cn("font-mono", vix != null && vix < 20 ? "text-trading-profit" : vix != null && vix > 25 ? "text-trading-loss" : "text-yellow-400")}>
+              VIX {vix != null ? vix.toFixed(2) : "--"}
+            </span>
+            <span className="text-muted-foreground/50">·</span>
+            <span className={cn("font-mono", spyUp === true ? "text-trading-profit" : spyUp === false ? "text-trading-loss" : "text-muted-foreground")}>
+              SPY {spy != null ? spy.toFixed(2) : "--"}{spyChange !== null ? ` ${spyUp ? "↑" : "↓"}${Math.abs(spyChange).toFixed(2)}%` : ""}
+            </span>
+            <span className="text-muted-foreground/50">·</span>
+            <span className={isMarketOpen ? "text-trading-profit" : "text-muted-foreground"}>
+              שוק: {isMarketOpen ? "פתוח" : "סגור"}
+            </span>
             <span className="text-muted-foreground/50">·</span>
             <span className="text-trading-profit">זמן אמת</span>
-            <span className="text-muted-foreground/50">·</span>
-            <span className="text-muted-foreground">שוק: --</span>
             <span className="text-muted-foreground/50">·</span>
             <span className="font-mono text-muted-foreground/70">{clock}</span>
           </div>
