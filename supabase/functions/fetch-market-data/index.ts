@@ -41,15 +41,15 @@ Deno.serve(async (req) => {
 
       const values = data.values || []
       if (values.length === 0) {
-        results[symbol] = { error: 'No data returned' }
+        results[name] = { error: 'No data returned' }
         continue
       }
 
       const latest = values[0]
       const prev = values[1] || latest
 
-      results[symbol] = {
-        symbol,
+      results[name] = {
+        symbol: name,
         open: parseFloat(latest.open),
         high: parseFloat(latest.high),
         low: parseFloat(latest.low),
