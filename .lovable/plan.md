@@ -1,64 +1,64 @@
 
 
-# סוכן חדשות חכם — ניתוח AI + קורלציה עם שוק
+# צירוף מנוע האופטימיזציה מהפרויקט השני
 
 ## מצב נוכחי
-- 53 חדשות ב-DB (יומיים אחרונים בלבד)
-- 3 נקודות SPY, 3 נקודות VIX
-- **אין ניתוח AI** על אף חדשה — אין מסקנות, אין קורלציה עם שוק
-- שדות `actual_spy_1h`, `actual_vix_change` ריקים לגמרי
+הפרויקט **Real-Time Trading Insights** מכיל מנוע אופטימיזציה מלא עם:
+- **סימולטור** (`simulatorV2.ts`) — 2,171 שורות, 5 אסטרטגיות מסחר
+- **אינדיקטורים** (`indicators.ts`) — 429 שורות (RSI, EMA, ATR, BB, ADX)
+- **אופטימייזר חכם** (`smartOptimizer.ts`) — 496 שורות, רב-שלבי עם 3 סבבים
+- **Web Worker** — מריץ backtests במקביל ללא חסימת UI
+- **טיפוסים** (`types.ts`) — 639 שורות, Candle, Trade, BacktestResult, ParameterRange
+- עוד ~15 קבצי lib ו-17 קומפוננטות UI
 
-## מה נבנה
+## הגישה — העתקה + התאמה
 
-### שלב 1: הוספת שדות ניתוח AI לטבלת news_events
-Migration שמוסיף:
-- `ai_analysis` (text) — מסקנות הסוכן על החדשה
-- `ai_sentiment_score` (numeric) — ציון סנטימנט -100 עד +100
-- `predicted_spy_impact` (text) — תחזית השפעה על SPY
-- `predicted_vix_impact` (text) — תחזית השפעה על VIX
-- `analyzed_at` (timestamptz) — מתי נותח
+### שלב 1: העתקת קבצי הליבה (lib)
+העתקת כל קבצי ה-lib מהפרויקט השני לתיקייה `src/lib/optimizer/`:
 
-### שלב 2: Edge Function — `analyze-news`
-פונקציה שעושה 3 דברים:
+| קובץ | תיאור | שורות |
+|-------|--------|-------|
+| `simulatorV2.ts` | מנוע הסימולציה | ~2,171 |
+| `indicators.ts` | חישוב אינדיקטורים | ~429 |
+| `smartOptimizer.ts` | אופטימיזציה רב-שלבית | ~496 |
+| `strategies.ts` | לוגיקת אסטרטגיות | ? |
+| `strategyEngine.ts` | מנוע אסטרטגיות | ? |
+| `portfolioOptimizer.ts` | אופטימיזציית פורטפוליו | ? |
+| `portfolioSimulator.ts` | סימולציית פורטפוליו | ? |
+| `multiObjectiveMetrics.ts` | מטריקות | ? |
+| `debugConfig.ts` | קונפיגורציית דיבאג | ? |
+| `presetConfigs.ts` | הגדרות ברירת מחדל | ? |
+| `stageUtils.ts` | עזרים לשלבים | ? |
+| `csvParser.ts` | פרסור CSV | ? |
+| `memoryAwareOptimizer.ts` | אופטימייזר עם זיכרון | ? |
+| `utils.ts` | פונקציות עזר | ? |
 
-**א. שליפת חדשות חדשות מ-Finnhub** (כמו עכשיו)
+### שלב 2: העתקת types + worker
+- `types.ts` → `src/lib/optimizer/types.ts`
+- `optimizer.worker.ts` → `src/workers/optimizer.worker.ts`
+- `useOptimizationWorker.ts` → `src/hooks/useOptimizationWorker.ts`
 
-**ב. קורלציה עם שוק** — לכל חדשה ישנה (שעברה שעה+), שולף את נתוני SPY/VIX מאותו רגע ומשלים `actual_spy_1h` ו-`actual_vix_change`
+### שלב 3: העתקת קומפוננטות UI
+כל 17 הקומפוננטות מ-`src/components/optimizer/` לתיקייה מקבילה בפרויקט הנוכחי.
 
-**ג. ניתוח AI** — שולח כל חדשה חדשה ל-Lovable AI (Gemini 2.5 Flash) עם:
-- כותרת + תקציר החדשה
-- נתוני SPY/VIX נוכחיים
-- היסטוריית מסקנות קודמות (למידה מצטברת)
-- מבקש: מסקנה, תחזית השפעה, ציון סנטימנט, הסבר
+### שלב 4: עדכון דף Backtest
+- שדרוג `src/pages/Backtest.tsx` לכלול את ה-UI המלא של האופטימייזר
+- חיבור לנתונים מ-DB (market_data, tracked_symbols, optimization_results)
+- שמירת תוצאות אופטימיזציה ל-DB אוטומטית
 
-**ד. עדכון agent_memory** — כותב סיכום מצטבר: כמה חדשות נותחו, דפוסים שזוהו, מסקנות כלליות
+### שלב 5: אינטגרציה עם סוכנים
+- Edge function `run-optimization` שמפעילה אופטימיזציה אוטומטית
+- הסוכן הייעודי (Optimizer Agent) יוכל להפעיל אופטימיזציה ולשמור תוצאות
 
-### שלב 3: Frontend Polling
-- הפרונטאנד קורא ל-`analyze-news` כל **60 שניות**
-- כל חדשה מציגה את ניתוח ה-AI מתחת לכותרת
-- כרטיס סוכן מראה סטטיסטיקות: כמה נותח, דפוסים, מסקנות
+### שלב 6: תיקון imports
+- עדכון כל ה-imports הפנימיים בקבצים המועתקים
+- התאמה למבנה התיקיות של הפרויקט הנוכחי
 
-### שלב 4: עדכון UI — News.tsx
-- כל חדשה מציגה **"מחשבות הסוכן"** — הניתוח, התחזית, וההסבר
-- בועה מתרחבת עם קליק שמראה את כל הנמקת ה-AI
-- אם יש תגובת שוק בפועל — השוואה בין תחזית למציאות
-- כרטיס סוכן עליון מציג: סה"כ דפוסים, דיוק תחזיות, מסקנות מרכזיות
+## סיכום היקף
+- ~20 קבצי lib + 17 קומפוננטות + 1 worker + 1 hook + types
+- עדכון דף Backtest
+- Edge function חדש לאוטומציה
 
-## לגבי "מ-2008"
-Finnhub API נותן רק חדשות אחרונות (לא היסטוריות מ-2008). הסוכן ילמד **מהרגע הזה קדימה** — כל חדשה שנכנסת תנותח, תתועד עם תגובת השוק, והידע יצטבר לאורך זמן. ככל שיעבור זמן — יהיו לו יותר דפוסים ומסקנות.
-
-## קבצים
-
-| קובץ | פעולה |
-|-------|--------|
-| Migration | הוספת שדות AI ל-`news_events` |
-| `supabase/functions/analyze-news/index.ts` | חדש — ניתוח AI + קורלציה |
-| `src/hooks/use-trading-data.ts` | עדכון hook לקריאה ל-analyze-news |
-| `src/pages/News.tsx` | עדכון UI — הצגת מחשבות סוכן |
-
-## פרטים טכניים
-- AI: Lovable AI Gateway עם `google/gemini-2.5-flash` (לא צריך API key נוסף)
-- הניתוח רץ רק על חדשות שעדיין לא נותחו (`analyzed_at IS NULL`)
-- קורלציה: מחפש ב-`market_data` את הרשומה הקרובה ביותר לזמן החדשה ושעה אחרי
-- למידה מצטברת: כל 50 חדשות — סיכום דפוסים נשמר ב-`agent_memory`
+## הערה חשובה
+זוהי העתקה של כ-40 קבצים עם אלפי שורות קוד. מומלץ לעשות זאת בשלבים — קודם את קבצי הליבה (lib + types), אחר כך ה-UI, ולבסוף האינטגרציה עם הסוכנים.
 
