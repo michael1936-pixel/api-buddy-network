@@ -63,10 +63,9 @@ Deno.serve(async (req) => {
     // Write to market_data in background (don't block response)
     if (SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY) {
       const sb = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
-      for (const sym of symbols) {
+      for (const sym of ['SPY', 'VIX']) {
         const r = results[sym]
         if (r && !r.error) {
-          // Upsert — use symbol+interval as conflict key concept; just insert
           await sb.from('market_data').insert({
             symbol: r.symbol,
             open: r.open,
