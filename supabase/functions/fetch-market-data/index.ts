@@ -5,6 +5,7 @@ const corsHeaders = {
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.49.1'
 
 const TWELVE_DATA_KEY = Deno.env.get('TWELVE_DATA_API_KEY') || ''
+const FINNHUB_KEY = Deno.env.get('FINNHUB_API_KEY') || ''
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL') || ''
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || ''
 
@@ -26,18 +27,18 @@ Deno.serve(async (req) => {
     // SPY + VIXY from Twelve Data
     const mainSymbols = ['SPY', 'VIXY']
     const mainUrl = `https://api.twelvedata.com/time_series?symbol=${mainSymbols.join(',')}&interval=1min&outputsize=2&apikey=${TWELVE_DATA_KEY}`
-    
-    // VIX separately (index, might need different handling)
-    const vixUrl = `https://api.twelvedata.com/time_series?symbol=VIX&interval=5min&outputsize=2&apikey=${TWELVE_DATA_KEY}`
 
-    const [mainResp, vixResp] = await Promise.all([
-      fetch(mainUrl),
-      fetch(vixUrl),
-    ])
-    const [mainData, vixData] = await Promise.all([
-      mainResp.json(),
-      vixResp.json(),
-    ])
+    // VIX quote from Finnhub (real-time CBOE VIX)
+    const vixQuoteUrl = FINNHUB_KEY
+      ? `https://finnhub.io/api/v1/quote?symbol=^VIX&token=${FINNHUB_KEY}`
+      : null
+
+    const fetches: Promise<Response>[] = [fetch(mainUrl)]
+    if (vixQuoteUrl) fetches.push(fetch(vixQuoteUrl))
+
+    const responses = await Promise.all(fetches)
+    const mainData = await responses[0].json()
+    const vixQuote = responses.length > 1 ? await responses[1].json() : null
 
     // Parse SPY + VIXY
     for (const sym of mainSymbols) {
@@ -57,22 +58,24 @@ Deno.serve(async (req) => {
       fetchedFromApi.add(sym)
     }
 
-    // Parse VIX
-    if (vixData && vixData.status !== 'error' && vixData.values?.length) {
-      const latest = vixData.values[0]
-      const prev = vixData.values[1] || latest
+    // Parse VIX from Finnhub quote
+    if (vixQuote && vixQuote.c && vixQuote.c > 0) {
       results.VIX = {
-        symbol: 'VIX', open: parseFloat(latest.open), high: parseFloat(latest.high),
-        low: parseFloat(latest.low), close: parseFloat(latest.close),
-        volume: parseInt(latest.volume || '0'), timestamp: latest.datetime,
-        prev_close: parseFloat(prev.close),
+        symbol: 'VIX',
+        open: vixQuote.o || vixQuote.c,
+        high: vixQuote.h || vixQuote.c,
+        low: vixQuote.l || vixQuote.c,
+        close: vixQuote.c,
+        volume: 0,
+        timestamp: new Date(vixQuote.t * 1000).toISOString(),
+        prev_close: vixQuote.pc || vixQuote.c,
       }
       fetchedFromApi.add('VIX')
     } else {
-      console.warn('VIX from Twelve Data failed:', vixData?.message || 'No data')
+      console.warn('VIX from Finnhub failed:', JSON.stringify(vixQuote))
     }
 
-    // Fallback: if VIX failed from Twelve Data, try DB
+    // Fallback: if VIX failed, try DB
     if (!fetchedFromApi.has('VIX') && SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY) {
       const sb = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
       const { data: vixRows } = await sb.from('market_data')
@@ -90,22 +93,19 @@ Deno.serve(async (req) => {
       }
     }
 
-    // Save API-fetched data to DB (skip fallback data to avoid duplicates)
-    if (SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY && fetchedFromApi.size > 0) {
+    // Save API-fetched SPY to DB
+    if (SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY && fetchedFromApi.has('SPY')) {
       const sb = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
-      for (const sym of fetchedFromApi) {
-        if (sym === 'VIXY') continue // only save SPY + VIX
-        const r = results[sym]
-        if (r && !r.error) {
-          await sb.from('market_data').upsert({
-            symbol: sym, open: r.open, high: r.high,
-            low: r.low, close: r.close, volume: r.volume,
-            timestamp: new Date(r.timestamp).toISOString(), interval: '1min',
-          }, { onConflict: 'symbol,interval,timestamp', ignoreDuplicates: true })
-            .then(({ error }) => {
-              if (error) console.error(`DB upsert error for ${sym}:`, error.message)
-            })
-        }
+      const r = results.SPY
+      if (r && !r.error) {
+        await sb.from('market_data').upsert({
+          symbol: 'SPY', open: r.open, high: r.high,
+          low: r.low, close: r.close, volume: r.volume,
+          timestamp: new Date(r.timestamp).toISOString(), interval: '1min',
+        }, { onConflict: 'symbol,interval,timestamp', ignoreDuplicates: true })
+          .then(({ error }) => {
+            if (error) console.error('DB upsert error for SPY:', error.message)
+          })
       }
     }
 
