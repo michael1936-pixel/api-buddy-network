@@ -239,7 +239,7 @@ export const useOptimizationStore = create<OptimizationState>((set, get) => ({
 }));
 
 function startPolling(
-  set: (state: Partial<OptimizationState>) => void,
+  set: (state: Partial<OptimizationState> | ((state: OptimizationState) => Partial<OptimizationState>)) => void,
   get: () => OptimizationState
 ) {
   stopPolling();
@@ -324,7 +324,7 @@ function startPolling(
 }
 
 function startPollingQueue(
-  set: (state: Partial<OptimizationState>) => void,
+  set: (state: Partial<OptimizationState> | ((state: OptimizationState) => Partial<OptimizationState>)) => void,
   get: () => OptimizationState,
   symbols: string[],
   runIds: number[],
