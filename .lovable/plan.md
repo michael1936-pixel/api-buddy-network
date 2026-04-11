@@ -1,41 +1,43 @@
 
 
-## תיקון מהירות + התאמת תצוגה מהפרויקט השני
+## תיקון הקפאת הדף — העברת האופטימיזציה ל-Web Worker
 
-### בעיה 1: מהירות 0.4 קומב׳/שניה (במקום 300)
+### שורש הבעיה
+האופטימיזציה רצה על ה-**main thread** של הדפדפן. כל backtest מחשב אינדיקטורים (RSI, EMA, ATR, ADX, BB) על 12,000+ bars — חישוב כבד שלוקח ~50ms+ לקומבינציה. גם עם yield כל 20 קומבינציות, ה-main thread נחסם לכ-1 שנייה בין yields, מה שגורם לדף להיתקע לגמרי.
 
-**שורש הבעיה**: ב-`portfolioOptimizer.ts` יש yield ל-UI כל 16ms עם `setTimeout(0)`. בפועל `setTimeout(0)` לוקח ~4ms מינימום בדפדפן, וכשכל קומבינציה מעבדת 12,374 bars עם חישובי אינדיקטורים — ה-yield קורה כמעט אחרי כל קומבינציה, מה שהורג את הביצועים.
+**בפרויקט השני** (`Real-Time Trading Insights`) זה פתור — שם יש **Web Worker** (`src/workers/optimizer.worker.ts`) שמריץ את כל החישוב ב-thread נפרד. ה-UI חופשי לגמרי.
 
-**תיקון**: לעבור ל-yield כל 20 קומבינציות עם `requestAnimationFrame` — בדיוק כמו בפרויקט השני:
-```typescript
-// במקום yield כל 16ms:
-if (processedCount % 20 === 0) {
-  await new Promise(resolve => {
-    requestAnimationFrame(() => resolve(undefined));
-  });
-  // update progress here
-}
-```
-זה יתן שיפור של x50-x100 במהירות.
+### מה ייבנה
 
-### בעיה 2: התצוגה לא זהה
+**1. Web Worker לאופטימיזציה**
+- קובץ חדש `src/workers/optimizer.worker.ts`
+- מקבל `init` עם candles + config + fixedParams
+- מקבל `process` ומריץ את כל הקומבינציות ב-thread נפרד
+- שולח `progress` updates כל ~50 קומבינציות
+- שולח `results_batch` עם תוצאות
+- שולח `complete` בסיום
+- lazy generator לקומבינציות (ללא memory spike)
 
-ההבדלים בין הקומפוננטה הנוכחית לפרויקט השני:
-- חסר `preRunMode` (מצב לפני הרצה)
-- חסר `onRoundToggle` (toggle כל סיבוב)  
-- חסר תצוגת "שלב נוכחי" (Train/Test results) ו-"הטוב ביותר כללי" עם Zap icon
-- חסר Legend בתחתית (Train/Test/הושלם/הושבת)
+**2. עדכון portfolioOptimizer.ts**
+- פונקציה חדשה `optimizeWithWorker()` שמתקשרת עם ה-Worker
+- ה-Worker מייצר קומבינציות ומריץ backtests בעצמו
+- ה-main thread רק מקבל progress ו-results דרך `postMessage`
 
-**תיקון**: העתקה ישירה של הקומפוננטה מהפרויקט השני (`SmartOptimizationProgress.tsx` — 674 שורות) עם התאמות import בלבד.
+**3. העתקת התצוגה מהפרויקט השני (1:1)**
+- קובץ `OptimizationProgress.tsx` — העתקה ישירה של 674 השורות מ-`SmartOptimizationProgress.tsx` של הפרויקט השני
+- כולל: 3 סיבובים צבעוניים, checkboxes, Legend, current/best results עם Zap, progress bars כפולים, מהירות ו-ETA
 
 ### קבצים שישתנו
 
 | קובץ | שינוי |
 |-------|-------|
-| `src/lib/optimizer/portfolioOptimizer.ts` | yield כל 20 קומבינציות עם `requestAnimationFrame` במקום כל 16ms עם `setTimeout` |
-| `src/components/backtest/OptimizationProgress.tsx` | העתקה מהפרויקט השני עם התאמת imports |
+| `src/workers/optimizer.worker.ts` | **חדש** — Worker שמריץ backtests מחוץ ל-main thread |
+| `src/lib/optimizer/portfolioOptimizer.ts` | הוספת `optimizeWithWorker()` שמתקשר עם ה-Worker |
+| `src/components/backtest/OptimizationProgress.tsx` | **שכתוב** — העתקה 1:1 מהפרויקט השני |
+| `src/pages/Backtest.tsx` | שימוש ב-Worker במקום חישוב ישיר על main thread |
 
 ### תוצאה צפויה
-- מהירות ~200-400 קומב׳/שניה (כמו בפרויקט השני)
-- תצוגה זהה לפרויקט השני
+- הדף **לא ייתקע** — כל החישוב רץ ב-thread נפרד
+- מהירות ~300 קומב׳/שניה (כמו בפרויקט השני)
+- תצוגה זהה 1:1 לפרויקט השני
 
