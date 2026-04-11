@@ -184,9 +184,9 @@ export async function optimizePortfolioWithWorker(
     }
 
     const shouldReport = current === 1 || current === total || current % progressUpdateInterval === 0;
-    const shouldYield = current === total || now() - lastYieldAt >= 16;
+    const shouldYield = current % YIELD_EVERY_N === 0 || current === total;
 
-    if (shouldReport || shouldYield) {
+    if (shouldReport) {
       onProgress?.({
         current,
         total,
@@ -196,8 +196,7 @@ export async function optimizePortfolioWithWorker(
     }
 
     if (shouldYield && current < total) {
-      await sleepToPaint();
-      lastYieldAt = now();
+      await yieldToUI();
     }
   }
 
