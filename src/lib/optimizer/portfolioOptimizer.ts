@@ -15,8 +15,9 @@ export interface OptimizationProgressInfo {
 }
 
 const COMBINATION_PRECISION = 1000;
+const YIELD_EVERY_N = 20;
 const now = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
-const sleepToPaint = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
+const yieldToUI = () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
 
 function getParameterRanges(config: ExtendedStocksOptimizationConfig): { name: string; range: ParameterRange }[] {
   const ranges: { name: string; range: ParameterRange }[] = [];
@@ -183,9 +184,9 @@ export async function optimizePortfolioWithWorker(
     }
 
     const shouldReport = current === 1 || current === total || current % progressUpdateInterval === 0;
-    const shouldYield = current === total || now() - lastYieldAt >= 16;
+    const shouldYield = current % YIELD_EVERY_N === 0 || current === total;
 
-    if (shouldReport || shouldYield) {
+    if (shouldReport) {
       onProgress?.({
         current,
         total,
@@ -195,8 +196,7 @@ export async function optimizePortfolioWithWorker(
     }
 
     if (shouldYield && current < total) {
-      await sleepToPaint();
-      lastYieldAt = now();
+      await yieldToUI();
     }
   }
 
