@@ -1,68 +1,39 @@
 
 
-## תיקון דף Backtest — שורת חיפוש + הורדת נתונים אוטומטית + סוכני Train/Test
+## תיקון מנוע האופטימיזציה — 3 באגים קריטיים
 
-### הבעיה
-1. אין שורת חיפוש — אי אפשר למצוא מניה בקלות
-2. אין מספיק נתונים ב-DB (SPY=93 bars, NVDA=35) — צריך לפחות 200
-3. ה-train/test split קשיח 70/30 במקום להשתמש בסוכן שלומד
+### בעיות שנמצאו
 
-### מה ייבנה
+**1. ה-Preset Config לא מאפשר אופטימיזציה (הבעיה העיקרית)**
+כל הפרמטרים ב-`NNE_PRESET_CONFIG` מוגדרים עם `min === max` (לדוגמה: `stop_distance_percent_long: { min: 14, max: 14, step: 1 }`). זה אומר שאין טווח לחיפוש — המנוע מריץ **קומבינציה אחת בלבד** ומסיים מיד. לכן הוא "סיים כל כך מהר".
 
-**1. שורת חיפוש בראש הדף**
-- Input עם autocomplete מתוך `sp500_symbols` + `tracked_symbols`
-- אפשר לכתוב כל סימול (גם לא S&P)
-- לחיצה על תוצאה → מפעיל את כל הזרימה
+**תיקון:** הגדרת טווחים אמיתיים לפרמטרים — כל אסטרטגיה תקבל טווח סביר לחיפוש. לדוגמה:
+- `stop_distance_percent_long: { min: 6, max: 20, step: 2 }`
+- `s1_ema_fast_len: { min: 5, max: 15, step: 2 }`
+- `bb2_adx_max: { min: 30, max: 60, step: 5 }`
+- וכו' — כל 5 האסטרטגיות + ניהול עסקאות
 
-**2. Edge Function: `download-historical-data`**
-- מקבל symbol, מוריד 5 שנים של 15min bars מ-Twelve Data
-- Twelve Data נותן מקסימום 5000 bars per request → צריך pagination (כ-8 requests ל-5 שנים)
-- שומר ל-`market_data` table
-- מעדכן `data_download_jobs` עם סטטוס
-- מעדכן `tracked_symbols` עם `total_bars`
+**2. רק 1,000 bars נטענים מה-DB (במקום 32,340)**
+Supabase מחזיר מקסימום 1,000 שורות כברירת מחדל. הקוד לא משתמש בpagination, אז למרות שהורדנו 32,340 bars ל-AAPL, רק 1,000 מגיעים למנוע.
 
-**3. סוכני Train/Test Split + Test Threshold (client-side)**
-- מימוש `TrainTestSplitAgent` ב-client — טוען מ-`agent_memory` table
-- מימוש `TestThresholdAgent` ב-client — מעריך אם תוצאה "עוברת"
-- ה-split נקבע דינמית לפי מה שהסוכן למד (ברירת מחדל 30% train / 70% test)
-- אחרי אופטימיזציה: TestThresholdAgent מחליט passed/failed + score
-
-**4. זרימה מלאה בלחיצה על מניה**
-```text
-User types "AAPL" → selects from search
-  ↓
-Check market_data count for AAPL
-  ↓ (< 200 bars?)
-Call download-historical-data edge function
-  ↓ (downloads ~33K bars, 5 years of 15min)
-Load TrainTestSplitAgent from agent_memory
-  ↓ (gets recommended split, e.g. 30% train)
-Run smartOptimization with dynamic split
-  ↓
-TestThresholdAgent evaluates result (score 0-100)
-  ↓
-Save to optimization_results with agent decision
+**תיקון:** טעינת כל ה-bars עם pagination:
+```
+loop: fetch 1000 rows at offset → append → until rows < 1000
 ```
 
-### קבצים
+**3. ה-download עובד נכון!**
+הלוגים מאשרים: 7 requests, 32,340 bars ל-AAPL. זה בסדר.
+
+### קבצים שישתנו
 
 | קובץ | שינוי |
 |-------|-------|
-| `supabase/functions/download-historical-data/index.ts` | **חדש** — Edge Function להורדת 5 שנים נתונים מ-Twelve Data |
-| `src/lib/optimizer/trainTestSplitAgent.ts` | **חדש** — סוכן split (client-side, טוען מ-agent_memory) |
-| `src/lib/optimizer/testThresholdAgent.ts` | **חדש** — סוכן threshold (client-side, מעריך תוצאות) |
-| `src/pages/Backtest.tsx` | שורת חיפוש + שילוב הסוכנים בזרימת האופטימיזציה |
-| `src/components/backtest/SymbolSearch.tsx` | **חדש** — קומפוננטת חיפוש מניה |
+| `src/lib/optimizer/presetConfigs.ts` | טווחים אמיתיים לכל הפרמטרים |
+| `src/pages/Backtest.tsx` | pagination בטעינת market_data (כל ה-32K bars) |
 
-### Edge Function — download-historical-data
-- משתמש ב-`TWELVE_DATA_API_KEY` (כבר קיים ב-secrets)
-- Twelve Data: `outputsize=5000` נותן 5000 bars, צריך ~7 requests עם `start_date/end_date` לכיסוי 5 שנים
-- Rate limit: 8 requests/min ב-free tier → מוסיף delay בין requests
-- שומר batch ב-upsert ל-`market_data` (on conflict: symbol+interval+timestamp)
-- מחזיר progress updates (כמה bars הורדו)
-
-### הערות
-- הסוכנים רצים client-side (קוראים מ-agent_memory) — הסנכרון עם Claude יהיה דרך שרת Railway
-- ה-TestThresholdAgent משתמש בציון 0-100: עובר מ-70+ נקודות
-- אם אין state ב-agent_memory (ריק כרגע) → משתמש בברירות מחדל מהמסמך
+### תוצאה צפויה
+- האופטימיזציה תרוץ **אלפי קומבינציות** (לא 1)
+- תיקח כמה דקות (לא שנייה)
+- תשתמש ב-**כל 32,000+ ה-bars** (לא 1,000)
+- Progress bar יראה התקדמות אמיתית
 
