@@ -197,8 +197,8 @@ export const useOptimizationStore = create<OptimizationState>((set, get) => ({
           current_stage: s.smartProgress?.currentStage || 0,
           current_combo: s.overallCombinations.current,
           total_combos: s.overallCombinations.total,
-          best_train: s.smartProgress?.bestResult?.totalTrainReturn,
-          best_test: s.smartProgress?.bestResult?.totalTestReturn,
+        best_train: s.smartProgress?.bestReturn,
+        best_test: s.smartProgress?.bestTestReturn,
         });
       }
     }, PROGRESS_PERSIST_INTERVAL);
