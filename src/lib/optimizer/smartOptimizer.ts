@@ -101,21 +101,26 @@ function generateDynamicStages(stepMult: number = 4): OptimizationStage[] {
   const stages: OptimizationStage[] = [];
 
   // Round 1: 7 stages — broad scan (step ×4)
+  // Stages 0-2 (Long, Short, S1 EMA): strat1=true only
+  // Stages 3-6 (S2-S5): each strategy runs ALONE (strat1=false)
   for (let i = 0; i < 7; i++) {
     const stratNum = i - 1;
+    const isS1Stage = i <= 2; // Long, Short, S1 EMA
     stages.push({
       ...BASE_STAGES[i], roundNumber: 1, stepMultiplier: stepMult,
-      enabledStrategies: { strat1: true, strat2: stratNum === 2, strat3: stratNum === 3, strat4: stratNum === 4, strat5: stratNum === 5 },
+      enabledStrategies: { strat1: isS1Stage, strat2: stratNum === 2, strat3: stratNum === 3, strat4: stratNum === 4, strat5: stratNum === 5 },
       disableGlobalFilters: true, filterKey: STAGE_FILTER_KEYS[i],
     });
   }
 
   // Round 2: 7 stages — zone fine-tuning
+  // Same strategy isolation as R1: S2-S5 run alone without S1
   for (let i = 0; i < 7; i++) {
     const stratNum = i - 1;
+    const isS1Stage = i <= 2;
     stages.push({
       ...BASE_STAGES[i], name: `דיוק ${BASE_STAGES[i].name}`, roundNumber: 2,
-      enabledStrategies: { strat1: true, strat2: stratNum === 2, strat3: stratNum === 3, strat4: stratNum === 4, strat5: stratNum === 5 },
+      enabledStrategies: { strat1: isS1Stage, strat2: stratNum === 2, strat3: stratNum === 3, strat4: stratNum === 4, strat5: stratNum === 5 },
       disableGlobalFilters: true, useZoneData: true, round1StageIndex: i, filterKey: STAGE_FILTER_KEYS[i],
     });
   }
@@ -234,16 +239,23 @@ function collectTopZones(allResults: Array<{ params: ExtendedStocksStrategyParam
   const numericParams = paramsToOptimize.filter(k => !BOOLEAN_PARAMS_SET.has(k));
 
   for (const paramKey of numericParams) {
-    const valueGroups = new Map<number, { sum: number; count: number }>();
+    const valueGroups = new Map<number, { sum: number; count: number; values: number[] }>();
     for (const r of allResults) {
       const v = (r.params as any)[paramKey];
       if (typeof v !== 'number') continue;
       const rounded = Number(v.toFixed(10));
       const existing = valueGroups.get(rounded);
-      if (existing) { existing.sum += r.trainReturn; existing.count++; }
-      else valueGroups.set(rounded, { sum: r.trainReturn, count: 1 });
+      if (existing) { existing.sum += r.trainReturn; existing.count++; existing.values.push(r.trainReturn); }
+      else valueGroups.set(rounded, { sum: r.trainReturn, count: 1, values: [r.trainReturn] });
     }
-    const scored = Array.from(valueGroups.entries()).map(([value, { sum, count }]) => ({ value, avg: sum / count, count })).sort((a, b) => b.avg - a.avg);
+    // Score = avg_return / std × log(count) — per document spec
+    const scored = Array.from(valueGroups.entries()).map(([value, { sum, count, values }]) => {
+      const avg = sum / count;
+      const variance = values.reduce((s, v) => s + Math.pow(v - avg, 2), 0) / Math.max(count, 1);
+      const std = Math.sqrt(variance);
+      const score = std > 0.0001 ? (avg / std) * Math.log(count + 1) : avg * Math.log(count + 1);
+      return { value, score, count };
+    }).sort((a, b) => b.score - a.score);
     zones[paramKey] = scored.slice(0, numZones).map(s => s.value).sort((a, b) => a - b);
   }
   return zones;
@@ -345,32 +357,101 @@ export async function runSmartOptimization(
       stage.enabledStrategies = { ...activeCombination };
     }
 
-    // Strategy Combination Stage — simplified (test all 16 combos)
+    // Strategy Combination Stage — 23 specific combos per document spec
     if (stage.isStrategyCombinationStage) {
-      // Simple: test enable_strat2/3/4/5 as 16 combinations
-      const comboCfg = expandConfigForStage(stage, baseConfig, bestParams);
-      try {
-        const comboResult = await optimizePortfolio(
-          symbolsData, comboCfg, periodSplit, mode, simulationConfig,
-          (info) => onProgress?.({ ...info, current: info.current, total: info.total, currentStage: si + 1, totalStages: stages.length, stageName: stage.name, stageDescription: stage.description, bestReturn: info.bestReturn, bestTestReturn: info.bestTestReturn }),
-          abortSignal, undefined, false, 'profit', cache, si + 1, stage.roundNumber, preFiltered, indicatorCache,
-        );
-        if (comboResult.bestForProfit) {
-          const bp = comboResult.bestForProfit.parameters as ExtendedStocksStrategyParameters;
-          activeCombination = { strat1: bp.enable_strat1, strat2: bp.enable_strat2, strat3: bp.enable_strat3, strat4: bp.enable_strat4, strat5: bp.enable_strat5 };
-          bestParams.enable_strat2 = activeCombination.strat2;
-          bestParams.enable_strat3 = activeCombination.strat3;
-          bestParams.enable_strat4 = activeCombination.strat4;
-          bestParams.enable_strat5 = activeCombination.strat5;
-          if (comboResult.bestForProfit.totalTrainReturn > globalBestTrain) {
-            globalBestTrain = comboResult.bestForProfit.totalTrainReturn;
-            globalBestTest = comboResult.bestForProfit.totalTestReturn;
+      const STRATEGY_COMBOS: { strat1: boolean; strat2: boolean; strat3: boolean; strat4: boolean; strat5: boolean }[] = [
+        // 5 Singles
+        { strat1: true, strat2: false, strat3: false, strat4: false, strat5: false },
+        { strat1: false, strat2: true, strat3: false, strat4: false, strat5: false },
+        { strat1: false, strat2: false, strat3: true, strat4: false, strat5: false },
+        { strat1: false, strat2: false, strat3: false, strat4: true, strat5: false },
+        { strat1: false, strat2: false, strat3: false, strat4: false, strat5: true },
+        // 9 Pairs (including Breakout+InsideBar, InsideBar+ATR)
+        { strat1: true, strat2: true, strat3: false, strat4: false, strat5: false },
+        { strat1: true, strat2: false, strat3: true, strat4: false, strat5: false },
+        { strat1: true, strat2: false, strat3: false, strat4: true, strat5: false },
+        { strat1: true, strat2: false, strat3: false, strat4: false, strat5: true },
+        { strat1: false, strat2: true, strat3: true, strat4: false, strat5: false },
+        { strat1: false, strat2: true, strat3: false, strat4: true, strat5: false },
+        { strat1: false, strat2: false, strat3: true, strat4: true, strat5: false },
+        { strat1: false, strat2: false, strat3: true, strat4: false, strat5: true },
+        { strat1: false, strat2: false, strat3: false, strat4: true, strat5: true },
+        // 4 Triples
+        { strat1: true, strat2: true, strat3: true, strat4: false, strat5: false },
+        { strat1: true, strat2: true, strat3: false, strat4: true, strat5: false },
+        { strat1: true, strat2: false, strat3: true, strat4: false, strat5: true },
+        { strat1: true, strat2: false, strat3: false, strat4: true, strat5: true },
+        // 5 "All except X"
+        { strat1: false, strat2: true, strat3: true, strat4: true, strat5: true },
+        { strat1: true, strat2: false, strat3: true, strat4: true, strat5: true },
+        { strat1: true, strat2: true, strat3: false, strat4: true, strat5: true },
+        { strat1: true, strat2: true, strat3: true, strat4: false, strat5: true },
+        { strat1: true, strat2: true, strat3: true, strat4: true, strat5: false },
+      ];
+
+      let bestComboScore = -Infinity;
+      let bestComboResult: any = null;
+      let bestComboStrategies: typeof STRATEGY_COMBOS[0] | null = null;
+
+      for (let ci = 0; ci < STRATEGY_COMBOS.length; ci++) {
+        if (abortSignal?.aborted) break;
+        const combo = STRATEGY_COMBOS[ci];
+        const comboCfg = expandConfigForStage(stage, baseConfig, bestParams);
+        comboCfg.enable_strat1 = combo.strat1;
+        (comboCfg as any).enable_strat2 = combo.strat2;
+        (comboCfg as any).enable_strat3 = combo.strat3;
+        (comboCfg as any).enable_strat4 = combo.strat4;
+        (comboCfg as any).enable_strat5 = combo.strat5;
+
+        try {
+          const comboResult = await optimizePortfolio(
+            symbolsData, comboCfg, periodSplit, mode, simulationConfig,
+            (info) => onProgress?.({ ...info, current: ci, total: STRATEGY_COMBOS.length, currentStage: si + 1, totalStages: stages.length, stageName: `${stage.name} (${ci + 1}/${STRATEGY_COMBOS.length})`, stageDescription: stage.description, bestReturn: info.bestReturn, bestTestReturn: info.bestTestReturn }),
+            abortSignal, undefined, false, 'profit', cache, si + 1, stage.roundNumber, preFiltered, indicatorCache,
+          );
+          if (comboResult.bestForProfit) {
+            const bp = comboResult.bestForProfit;
+            const trainRet = bp.totalTrainReturn;
+            const testRet = bp.totalTestReturn;
+            const returnScore = (trainRet + testRet) / 2;
+            const overfit = Math.abs(trainRet - testRet);
+            const overfitPenalty = 1 / (1 + overfit / 200);
+            const activeCount = [combo.strat1, combo.strat2, combo.strat3, combo.strat4, combo.strat5].filter(Boolean).length;
+            const diversityBonus = 1 + (activeCount - 1) * 0.05;
+            // winRate and tradeCount from train results
+            const totalTrades = bp.trainResults.reduce((s: number, r: any) => s + (r.result?.totalTrades || 0), 0);
+            const totalWins = bp.trainResults.reduce((s: number, r: any) => s + (r.result?.wins || 0), 0);
+            const winRate = totalTrades > 0 ? (totalWins / totalTrades) * 100 : 0;
+            const winRateBonus = Math.max(0, (winRate - 50) / 50);
+            const tradeCountBonus = Math.min(totalTrades / 50, 1);
+            const score = returnScore * overfitPenalty * diversityBonus * (1 + winRateBonus * 0.3 + tradeCountBonus * 0.2);
+
+            console.log(`  Combo ${ci + 1}/23: [${combo.strat1 ? 'S1' : ''}${combo.strat2 ? 'S2' : ''}${combo.strat3 ? 'S3' : ''}${combo.strat4 ? 'S4' : ''}${combo.strat5 ? 'S5' : ''}] score=${score.toFixed(2)} ret=${returnScore.toFixed(2)} overfit=${overfit.toFixed(2)}`);
+
+            if (score > bestComboScore) {
+              bestComboScore = score;
+              bestComboResult = bp;
+              bestComboStrategies = combo;
+            }
+            globalResult = updateMultiObjectiveResult(globalResult, bp);
           }
-          globalResult = updateMultiObjectiveResult(globalResult, comboResult.bestForProfit);
-          stageResults.push({ stageNumber: si + 1, stageName: stage.name, bestReturn: comboResult.bestForProfit.totalTrainReturn, bestTestReturn: comboResult.bestForProfit.totalTestReturn, elapsedTime: (Date.now() - stageStart) / 1000, plannedCombinations: 16, actualTestedCombinations: 16, bestParameters: { ...bestParams } });
+        } catch (e: any) {
+          console.warn(`Combo ${ci + 1} error: ${e.message}`);
         }
-      } catch (e: any) {
-        console.warn(`Stage ${si + 1} error: ${e.message}`);
+      }
+
+      if (bestComboStrategies && bestComboResult) {
+        activeCombination = { ...bestComboStrategies };
+        bestParams.enable_strat2 = activeCombination.strat2;
+        bestParams.enable_strat3 = activeCombination.strat3;
+        bestParams.enable_strat4 = activeCombination.strat4;
+        bestParams.enable_strat5 = activeCombination.strat5;
+        if (bestComboResult.totalTrainReturn > globalBestTrain) {
+          globalBestTrain = bestComboResult.totalTrainReturn;
+          globalBestTest = bestComboResult.totalTestReturn;
+        }
+        stageResults.push({ stageNumber: si + 1, stageName: stage.name, bestReturn: bestComboResult.totalTrainReturn, bestTestReturn: bestComboResult.totalTestReturn, elapsedTime: (Date.now() - stageStart) / 1000, plannedCombinations: 23, actualTestedCombinations: STRATEGY_COMBOS.length, bestParameters: { ...bestParams } });
+        console.log(`  ✓ Winning combo: S1=${activeCombination.strat1} S2=${activeCombination.strat2} S3=${activeCombination.strat3} S4=${activeCombination.strat4} S5=${activeCombination.strat5} (score=${bestComboScore.toFixed(2)})`);
       }
       continue;
     }
@@ -469,7 +550,7 @@ export function estimateAllStageCombinations(baseConfig: ExtendedStocksOptimizat
         count *= Math.max(1, range);
       }
     }
-    if (stage.isStrategyCombinationStage) count = 16;
+    if (stage.isStrategyCombinationStage) count = 23;
     if (stage.isFinalTuning) {
       const tuneRange = stage.tuneRange || 2;
       count = 1;
