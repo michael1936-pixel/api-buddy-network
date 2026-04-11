@@ -71,16 +71,39 @@ export default function BacktestPage() {
         percent: 5,
       }));
 
-      const { data: marketData, error } = await supabase
-        .from('market_data')
-        .select('*')
-        .eq('symbol', symbol)
-        .order('timestamp', { ascending: true });
+      // Paginated fetch — get ALL bars (Supabase default limit is 1000)
+      let allBars: any[] = [];
+      const PAGE_SIZE = 1000;
+      let offset = 0;
+      let keepFetching = true;
 
-      if (error) throw new Error(`שגיאה בטעינת נתונים: ${error.message}`);
-      if (!marketData || marketData.length < 200) {
-        throw new Error(`לא מספיק נתונים ל-${symbol}: ${marketData?.length || 0} bars (צריך לפחות 200)`);
+      while (keepFetching) {
+        const { data: page, error: pageErr } = await supabase
+          .from('market_data')
+          .select('*')
+          .eq('symbol', symbol)
+          .order('timestamp', { ascending: true })
+          .range(offset, offset + PAGE_SIZE - 1);
+
+        if (pageErr) throw new Error(`שגיאה בטעינת נתונים: ${pageErr.message}`);
+        if (!page || page.length === 0) { keepFetching = false; break; }
+
+        allBars = allBars.concat(page);
+        offset += PAGE_SIZE;
+
+        setOptStatus(prev => ({
+          ...prev, stageDescription: `טוען נתוני ${symbol}... ${allBars.length.toLocaleString()} bars`,
+        }));
+
+        if (page.length < PAGE_SIZE) keepFetching = false;
       }
+
+      const marketData = allBars;
+      if (marketData.length < 200) {
+        throw new Error(`לא מספיק נתונים ל-${symbol}: ${marketData.length} bars (צריך לפחות 200)`);
+      }
+
+      console.log(`[Backtest] Loaded ${marketData.length.toLocaleString()} bars for ${symbol}`);
 
       // 4. Convert to Candle format
       const candles: Candle[] = marketData.map(bar => ({
