@@ -448,3 +448,37 @@ export function getOptimizationStages(): { name: string; stageNumber: number; ro
   const stages = generateDynamicStages();
   return stages.map((s, i) => ({ name: s.name, stageNumber: i + 1, round: s.roundNumber }));
 }
+
+/** Estimate combinations for each stage before running */
+export function estimateAllStageCombinations(baseConfig: ExtendedStocksOptimizationConfig): Record<number, number> {
+  const stages = generateDynamicStages();
+  const estimates: Record<number, number> = {};
+  for (let i = 0; i < stages.length; i++) {
+    const stage = stages[i];
+    let count = 1;
+    for (const key of stage.parametersToOptimize) {
+      if (BOOLEAN_PARAMS_SET.has(key)) {
+        count *= 2;
+        continue;
+      }
+      const customRange = stage.customRanges?.[key];
+      const preset = customRange || (baseConfig as any)[key];
+      if (preset && typeof preset === 'object' && 'min' in preset && preset.min !== preset.max) {
+        const step = (preset.step || 1) * (stage.stepMultiplier || 1);
+        const range = Math.floor((preset.max - preset.min) / step) + 1;
+        count *= Math.max(1, range);
+      }
+    }
+    if (stage.isStrategyCombinationStage) count = 16;
+    if (stage.isFinalTuning) {
+      const tuneRange = stage.tuneRange || 2;
+      count = 1;
+      for (const key of stage.parametersToOptimize) {
+        if (BOOLEAN_PARAMS_SET.has(key)) { count *= 2; continue; }
+        count *= (2 * tuneRange + 1);
+      }
+    }
+    estimates[i + 1] = count;
+  }
+  return estimates;
+}
