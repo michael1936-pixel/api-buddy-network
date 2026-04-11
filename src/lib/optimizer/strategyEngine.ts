@@ -1,7 +1,7 @@
 import type { Candle, ExtendedStocksStrategyParameters } from './types';
 import { highest, lowest } from './indicators';
 import {
-  StrategyIndicators, S2DebugInfo,
+  StrategyIndicators,
   strategy1_EMATrend, strategy2_BollingerMeanReversion,
   strategy3_RangeBreakout, strategy4_InsideBarBreakout, strategy5_ATRSqueezeBreakout,
 } from './strategies';
