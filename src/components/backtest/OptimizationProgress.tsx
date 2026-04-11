@@ -230,6 +230,7 @@ const RoundSection: React.FC<RoundSectionProps> = ({
                 onToggle={(enabled) => onStageToggle(globalIndex, enabled)}
                 stageProgress={stageProgressData}
                 displayNumber={idx + 1}
+                combinationsEstimate={stageEstimates?.[stage.stageNumber]}
               />
             );
           })}
