@@ -463,6 +463,9 @@ export async function runSmartOptimization(
     } else if (stage.useZoneData && stage.round1StageIndex !== undefined && round1Zones[stage.round1StageIndex]) {
       const zones = collectTopZones(round1Zones[stage.round1StageIndex], stage.parametersToOptimize, numGoodZones);
       stageCfg = createZoneConfig(baseConfig, zones, stage.parametersToOptimize, bestParams, zoneExpansionSteps);
+    } else if (stage.roundNumber === 2) {
+      // R2 fallback: fine-tune around best values instead of full range
+      stageCfg = createFineTuneConfig(baseConfig, bestParams, stage.parametersToOptimize, 2);
     } else {
       stageCfg = expandConfigForStage(stage, baseConfig, bestParams);
     }
@@ -534,29 +537,36 @@ export function getOptimizationStages(): { name: string; stageNumber: number; ro
 export function estimateAllStageCombinations(baseConfig: ExtendedStocksOptimizationConfig): Record<number, number> {
   const stages = generateDynamicStages();
   const estimates: Record<number, number> = {};
+  const numGoodZones = 10;
+  const zoneExpansion = 1;
   for (let i = 0; i < stages.length; i++) {
     const stage = stages[i];
     let count = 1;
-    for (const key of stage.parametersToOptimize) {
-      if (BOOLEAN_PARAMS_SET.has(key)) {
-        count *= 2;
-        continue;
-      }
-      const customRange = stage.customRanges?.[key];
-      const preset = customRange || (baseConfig as any)[key];
-      if (preset && typeof preset === 'object' && 'min' in preset && preset.min !== preset.max) {
-        const step = (preset.step || 1) * (stage.stepMultiplier || 1);
-        const range = Math.floor((preset.max - preset.min) / step) + 1;
-        count *= Math.max(1, range);
-      }
-    }
-    if (stage.isStrategyCombinationStage) count = 23;
-    if (stage.isFinalTuning) {
+
+    if (stage.isStrategyCombinationStage) {
+      count = 23;
+    } else if (stage.isFinalTuning) {
       const tuneRange = stage.tuneRange || 2;
-      count = 1;
       for (const key of stage.parametersToOptimize) {
         if (BOOLEAN_PARAMS_SET.has(key)) { count *= 2; continue; }
         count *= (2 * tuneRange + 1);
+      }
+    } else if (stage.useZoneData) {
+      // R2 zone-based: numZones * (2*expansion+1) per parameter
+      for (const key of stage.parametersToOptimize) {
+        if (BOOLEAN_PARAMS_SET.has(key)) { count *= 2; continue; }
+        count *= numGoodZones * (2 * zoneExpansion + 1);
+      }
+    } else {
+      for (const key of stage.parametersToOptimize) {
+        if (BOOLEAN_PARAMS_SET.has(key)) { count *= 2; continue; }
+        const customRange = stage.customRanges?.[key];
+        const preset = customRange || (baseConfig as any)[key];
+        if (preset && typeof preset === 'object' && 'min' in preset && preset.min !== preset.max) {
+          const step = (preset.step || 1) * (stage.stepMultiplier || 1);
+          const range = Math.floor((preset.max - preset.min) / step) + 1;
+          count *= Math.max(1, range);
+        }
       }
     }
     estimates[i + 1] = count;
