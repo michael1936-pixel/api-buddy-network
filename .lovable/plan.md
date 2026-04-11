@@ -1,79 +1,53 @@
 
-מה מצאתי
 
-1. האופטימיזציות כן נשמרות במסד הנתונים.
-   בדקתי את `optimization_results` ויש שם רשומות אחרונות ל-`AAPL` ו-`NNE`.
+## 3 תיקונים — תוצאות בזמן אמת, תור מניות, קומבינציות לכל שלב
 
-2. הסיבה שזה נראה כאילו "לא נשמר":
-   ב-`src/hooks/use-trading-data.ts` הפונקציה `useOptimizationResults()` טוענת רק:
-   `optimization_results WHERE is_active = true`
-   אבל כל התוצאות האחרונות במסד הן `is_active = false` עם `agent_decision = 'rejected'`.
-   כלומר: הן נשמרו, אבל ה-UI מסתיר אותן.
+### 1. תוצאה הכי טובה בזמן אמת (Train + Test)
 
-3. יש גם באג שקט בשמירה:
-   ב-`src/stores/optimizationStore.ts` יש `insert` ל-`optimization_results`, אבל לא נבדק `error`.
-   אם שמירה תיכשל, כרגע לא תקבל שגיאה ברורה.
+**הבעיה:** `smartProgress` כבר מכיל `bestReturn` ו-`bestTestReturn` מה-callback של `optimizePortfolio`, אבל ה-UI לא מציג אותם בזמן הריצה — רק אחרי שהשלב נגמר (ב-`stageResults`).
 
-4. לגבי "היא מתאפסת כשאני עובר עמוד":
-   - לא מצאתי קוד שעוצר אופטימיזציה במעבר route
-   - `stopOptimization()` נקראת רק ידנית
-   - אבל גם לא מצאתי `new Worker` פעיל; כרגע `runSmartOptimization()` רץ מתוך ה-store על ה-main thread
-   - לכן יש 2 מצבים:
-     - מעבר פנימי בתוך האפליקציה: ה-state אמור להישאר רק בזיכרון
-     - refresh / יציאה / סגירת טאב: הכול מתאפס, כי אין persistence של ריצה פעילה ואין backend job
+**הפתרון:**
+- הוספת `bestTrainReturn` ו-`bestTestReturn` ל-state ב-`optimizationStore.ts` — מתעדכנים בכל progress callback
+- הוספת תיבה חדשה "תוצאה טובה ביותר" ב-`OptimizationProgress.tsx` שמציגה בזמן אמת Train/Test עם צבעים (ירוק/אדום)
 
-מה צריך לבנות
+### 2. תור מניות — בחירת כמה מניות ברצף
 
-1. לתקן את "לא נשמר"
-   - ליצור hook נפרד ל"כל תוצאות האופטימיזציה"
-   - להפסיק לסנן רק `is_active = true` במסך Backtest
-   - להוסיף פילטר ברור: הכל / מאושרות / נדחו
+**הבעיה:** `SymbolSearch` שולח `onSelect(symbol)` עם מניה בודדת, ו-`runOptimization` לא מקבל תור.
 
-2. לתקן שמירה שקטה
-   - לבדוק `error` אחרי `insert`
-   - אם יש כשלון: לעדכן store, להציג toast, ולרשום log ברור
+**הפתרון:**
+- הוספת `symbolQueue: string[]` ו-`queueIndex: number` ל-store
+- פונקציה חדשה `runOptimizationQueue(symbols, queryClient)` שרצה כל מניה ברצף
+- בסיום מניה אחת → עוברת לבאה (עם toast קצר)
+- ב-`SymbolSearch` — תמיכה בבחירה מרובה (multi-select) עם כפתור "הרץ X מניות"
+- הצגת תור מניות ב-UI עם סטטוס לכל אחת
 
-3. לתקן reset של ריצה
-   - להוסיף טבלת `optimization_runs` ב-Lovable Cloud
-   - לשמור שם ריצה פעילה: `status`, `symbol`, `current_stage`, `current`, `total`, `best_train`, `best_test`, `updated_at`
-   - בתחילת ריצה ליצור רשומת `running`
-   - כל כמה שניות לעדכן progress
-   - בסיום לסמן `completed` / `failed` / `aborted`
+### 3. מספר קומבינציות לכל שלב לפני ריצה
 
-4. להחזיר state כשחוזרים לעמוד
-   - להוסיף `rehydrate` ל-`optimizationStore`
-   - בטעינת האפליקציה/חזרה ל-Backtest, לטעון את הריצה האחרונה ולהציג אותה מחדש
-   - להוסיף אינדיקטור קטן ב-navbar שאומר שאופטימיזציה רצה ברקע
+**הבעיה:** `smartOptimizer` מחשב את מספר הקומבינציות רק תוך כדי ריצה. ה-UI מקבל את ה-`total` מה-progress callback, אבל לפני שהשלב מתחיל — אין מידע.
 
-5. אם אתה רוצה שהיא תמשיך גם אחרי refresh / logout / סגירת טאב
-   - זה כבר לא מספיק בזיכרון של הדפדפן
-   - צריך להעביר את הרצת האופטימיזציה ל-job ב-Lovable Cloud, וה-UI רק יעקוב אחרי הסטטוס
+**הפתרון:**
+- הוספת פונקציה `estimateStageCombinations(stageIndex, baseConfig, bestParams)` ב-`smartOptimizer.ts` שמחשבת כמה קומבינציות צפויות לכל שלב
+- הוספת `stageEstimates: Record<number, number>` ל-store — מחושב פעם אחת בתחילת ריצה
+- ב-`StageRow` — אם השלב עוד לא התחיל, מציג "~X,XXX קומבינציות" (כבר יש prop `combinationsEstimate`)
 
-קבצים שישתנו
+### קבצים שישתנו
 
-- `src/hooks/use-trading-data.ts` — hook לכל התוצאות, בלי סינון קשיח
-- `src/pages/Backtest.tsx` — טבלת תוצאות עם rejected/approved + פילטרים
-- `src/stores/optimizationStore.ts` — בדיקת שגיאות insert + progress persistence + rehydrate
-- `src/components/AppLayout.tsx` — אינדיקטור ריצה גלובלי
-- migration חדשה — `optimization_runs` + RLS מתאים
+| קובץ | שינוי |
+|-------|-------|
+| `src/stores/optimizationStore.ts` | הוספת `bestTrainReturn`, `bestTestReturn`, `symbolQueue`, `queueIndex`, `stageEstimates`, `runOptimizationQueue()` |
+| `src/components/backtest/OptimizationProgress.tsx` | תיבת "Best" בזמן אמת, הצגת estimates לשלבים ממתינים |
+| `src/components/backtest/SymbolSearch.tsx` | מצב multi-select: בחירת כמה מניות → כפתור "הרץ" |
+| `src/lib/optimizer/smartOptimizer.ts` | export `estimateStageCombinations()` |
+| `src/pages/Backtest.tsx` | הצגת תור מניות, העברת estimates ל-progress card |
 
-פרטים טכניים
-
+### זרימת תור מניות
 ```text
-היום:
-runOptimization -> חישוב בזיכרון -> save רק בסוף
-Backtest query -> מציג רק is_active=true
-refresh/close -> מאפס הכול
-
-אחרי התיקון:
-start -> create optimization_run(running)
-progress -> update optimization_run every few seconds
-finish -> insert optimization_result + mark run completed
-UI -> show all results, not only approved
-app load/backtest return -> restore latest run from database
+User selects: AAPL, TSLA, NVDA → clicks "הרץ 3 מניות"
+  → store.symbolQueue = ['AAPL', 'TSLA', 'NVDA']
+  → runOptimization('AAPL') 
+  → on complete → runOptimization('TSLA')
+  → on complete → runOptimization('NVDA')
+  → done
+UI shows: [✅ AAPL] [🔄 TSLA] [⬜ NVDA]
 ```
 
-מסקנה קצרה
-
-הבעיה הראשונה היא לא "אין שמירה" אלא "יש שמירה, אבל אתה מציג רק תוצאות מאושרות".
-הבעיה השנייה היא שהריצה עצמה לא נשמרת כ-job מתמשך, ולכן כל יציאה אמיתית מה-session מאפסת אותה.
