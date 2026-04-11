@@ -18,6 +18,7 @@ const navItems = [
 export default function AppLayout({ children }: { children: ReactNode }) {
   const location = useLocation();
   const { data: marketData, isRealtime } = useMarketData();
+  const { isRunning: optRunning, currentSymbol: optSymbol } = useOptimizationStore();
   const [clock, setClock] = useState("");
 
   useEffect(() => {
@@ -87,6 +88,12 @@ export default function AppLayout({ children }: { children: ReactNode }) {
             </span>
             <span className="text-muted-foreground/50">·</span>
             <span className={isRealtime ? "text-trading-profit" : "text-trading-warning"}>{isRealtime ? "⚡ זמן אמת" : "🔄 REST"}</span>
+            {optRunning && (
+              <>
+                <span className="text-muted-foreground/50">·</span>
+                <span className="text-primary animate-pulse">🔬 {optSymbol}</span>
+              </>
+            )}
             <span className="text-muted-foreground/50">·</span>
             <span className="font-mono text-muted-foreground/70">{clock}</span>
           </div>
