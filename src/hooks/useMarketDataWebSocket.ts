@@ -1,103 +1,122 @@
-// @refresh reset
-import { useState, useEffect, useRef, useCallback } from "react";
+/**
+ * WebSocket hook that connects to the Railway internal market stream.
+ *
+ * Architecture:
+ *   Broker/Feed → Railway market-stream service → this WS → Zustand store
+ *
+ * The Railway server should expose a WS endpoint that:
+ *   1. Accepts connections at wss://<railway-host>/ws/market
+ *   2. Accepts subscribe/unsubscribe messages
+ *   3. Sends normalized tick messages
+ *
+ * Expected message format FROM server:
+ *   { type: "tick", symbol: "SPY", last: 550.25, bid: 550.24, ask: 550.26,
+ *     volume: 123456, exchange_ts: "2026-04-11T15:30:00.123Z", provider: "ibkr" }
+ *   { type: "status", status: "connected" | "subscribed" | "error", symbols?: [...] }
+ *   { type: "heartbeat" }
+ *
+ * Subscribe message TO server:
+ *   { action: "subscribe", symbols: ["SPY", "VIX"] }
+ *   { action: "unsubscribe", symbols: ["AAPL"] }
+ *
+ * Fallback: If RAILWAY_WS_URL is not configured, falls back to Finnhub direct WS.
+ */
+import { useEffect, useRef, useCallback } from "react";
+import { useMarketDataStore } from "@/stores/marketDataStore";
 import { supabase } from "@/integrations/supabase/client";
-import { useMarketDataLive } from "@/hooks/use-trading-data";
 
-interface TickData {
-  symbol: string;
-  close: number;
-  open: number;
-  high: number;
-  low: number;
-  volume: number;
-  prev_close: number;
-  timestamp: string;
-  source: "ws" | "rest";
-}
-
-type MarketDataMap = Record<string, TickData>;
+// Railway WS URL — set this to your Railway market stream endpoint
+const RAILWAY_WS_URL = import.meta.env.VITE_RAILWAY_WS_URL || "";
+// Fallback: Finnhub direct (limited but works for SPY)
+const FINNHUB_FALLBACK = true;
 
 const RECONNECT_DELAY_MS = 3000;
-const MAX_RECONNECT_ATTEMPTS = 5;
-const HEARTBEAT_INTERVAL_MS = 10000;
+const MAX_RECONNECT_ATTEMPTS = 10;
+const HEARTBEAT_INTERVAL_MS = 15000;
 
-export function useMarketDataWebSocket() {
-  const [data, setData] = useState<MarketDataMap>({});
-  const [wsStatus, setWsStatus] = useState<"connecting" | "connected" | "disconnected" | "error">("disconnected");
-  const [subscribeSuccess, setSubscribeSuccess] = useState(false);
+// RAF-based tick batching: accumulate ticks within one animation frame
+let pendingTicks: Record<string, any> = {};
+let rafId: number | null = null;
+
+function flushTicks() {
+  const batch = pendingTicks;
+  pendingTicks = {};
+  rafId = null;
+  if (Object.keys(batch).length > 0) {
+    useMarketDataStore.getState().updateTicks(batch);
+  }
+}
+
+function enqueueTick(symbol: string, tick: any) {
+  pendingTicks[symbol] = tick;
+  if (rafId === null) {
+    rafId = requestAnimationFrame(flushTicks);
+  }
+}
+
+export function useMarketStream() {
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectCount = useRef(0);
   const reconnectTimer = useRef<ReturnType<typeof setTimeout>>();
   const heartbeatTimer = useRef<ReturnType<typeof setInterval>>();
-  const apiKeyRef = useRef<string | null>(null);
-  const firstPriceRef = useRef<Record<string, number>>({});
   const mountedRef = useRef(true);
-  const subscribeFailed = useRef(false);
+  const apiKeyRef = useRef<string | null>(null);
 
-  // REST fallback — always runs as baseline
-  const { data: restData } = useMarketDataLive();
+  const { setStreamStatus, setIsRealtime, subscribedSymbols } = useMarketDataStore();
 
-  const stopHeartbeat = () => {
+  const stopHeartbeat = useCallback(() => {
     if (heartbeatTimer.current) {
       clearInterval(heartbeatTimer.current);
       heartbeatTimer.current = undefined;
     }
-  };
+  }, []);
 
-  const startHeartbeat = (ws: WebSocket) => {
+  const cleanup = useCallback(() => {
+    if (reconnectTimer.current) clearTimeout(reconnectTimer.current);
     stopHeartbeat();
-    heartbeatTimer.current = setInterval(() => {
-      if (ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ action: "heartbeat" }));
-      }
-    }, HEARTBEAT_INTERVAL_MS);
-  };
-
-  const connectRef = useRef<() => void>();
-  connectRef.current = async () => {
-    if (!mountedRef.current || subscribeFailed.current) return;
-
-    if (!apiKeyRef.current) {
-      try {
-        const { data: tokenData, error } = await supabase.functions.invoke("get-ws-token");
-        if (!mountedRef.current) return;
-        if (error || !tokenData?.token) {
-          console.warn("[WS] Failed to get token:", error);
-          setWsStatus("error");
-          return;
-        }
-        apiKeyRef.current = tokenData.token;
-      } catch (e) {
-        console.warn("[WS] get-ws-token error:", e);
-        if (mountedRef.current) setWsStatus("error");
-        return;
-      }
-    }
-
     if (wsRef.current) {
       wsRef.current.onclose = null;
       wsRef.current.close();
+      wsRef.current = null;
     }
-    stopHeartbeat();
+  }, [stopHeartbeat]);
 
+  const scheduleReconnect = useCallback(() => {
     if (!mountedRef.current) return;
-    setWsStatus("connecting");
+    if (reconnectCount.current >= MAX_RECONNECT_ATTEMPTS) {
+      console.warn("[WS] Max reconnect attempts reached");
+      setStreamStatus("error");
+      return;
+    }
+    reconnectCount.current++;
+    const delay = Math.min(RECONNECT_DELAY_MS * Math.pow(2, reconnectCount.current - 1), 60000);
+    console.log(`[WS] Reconnecting in ${delay}ms (attempt ${reconnectCount.current})`);
+    reconnectTimer.current = setTimeout(() => connectRef.current?.(), delay);
+  }, [setStreamStatus]);
 
-    const ws = new WebSocket(`wss://ws.twelvedata.com/v1/quotes/price?apikey=${apiKeyRef.current}`);
+  const connectRef = useRef<() => void>();
+
+  // ═══ Railway mode ═══
+  const connectRailway = useCallback(() => {
+    if (!mountedRef.current) return;
+    cleanup();
+    setStreamStatus("connecting");
+
+    const ws = new WebSocket(RAILWAY_WS_URL);
     wsRef.current = ws;
 
     ws.onopen = () => {
       if (!mountedRef.current) { ws.close(); return; }
-      console.log("[WS] Connected to Twelve Data");
-      // Don't set "connected" yet — wait for successful subscribe
+      console.log("[WS] Connected to Railway stream");
+      // Subscribe to desired symbols
+      const symbols = Array.from(subscribedSymbols);
+      ws.send(JSON.stringify({ action: "subscribe", symbols }));
 
-      // Simple format without exchange qualifiers
-      ws.send(JSON.stringify({
-        action: "subscribe",
-        params: { symbols: "SPY,VIX,VIXY" },
-      }));
-
-      startHeartbeat(ws);
+      heartbeatTimer.current = setInterval(() => {
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ action: "heartbeat" }));
+        }
+      }, HEARTBEAT_INTERVAL_MS);
     };
 
     ws.onmessage = (event) => {
@@ -105,124 +124,140 @@ export function useMarketDataWebSocket() {
       try {
         const msg = JSON.parse(event.data);
 
-        if (msg.event === "subscribe-status") {
-          console.log("[WS] Subscribe status:", msg.status, "success:", msg.success, "fails:", msg.fails, "full:", JSON.stringify(msg));
-          
-          if (msg.success?.length > 0) {
-            // At least some symbols succeeded
-            reconnectCount.current = 0;
-            setSubscribeSuccess(true);
-            setWsStatus("connected");
-          }
-          
-          if (msg.status === "error" && (!msg.success || msg.success.length === 0)) {
-            console.warn("[WS] All symbols failed to subscribe — stopping WS, using REST only");
-            subscribeFailed.current = true;
-            setSubscribeSuccess(false);
-            setWsStatus("error");
-            ws.close();
-            // Don't reconnect — the API doesn't support these symbols on this plan
-            return;
-          }
-          return;
-        }
-        if (msg.event === "heartbeat") return;
-
-        if (msg.event === "price" && msg.symbol) {
-          const price = parseFloat(msg.price);
-          if (isNaN(price)) return;
-          const sym = msg.symbol;
-
-          if (!firstPriceRef.current[sym]) {
-            firstPriceRef.current[sym] = price;
-          }
-
-          setData((prev) => {
-            const existing = prev[sym];
-            const prevClose = existing?.prev_close || firstPriceRef.current[sym] || price;
-            return {
-              ...prev,
-              [sym]: {
-                symbol: sym,
-                close: price,
-                open: existing?.open || price,
-                high: Math.max(existing?.high || 0, price),
-                low: existing?.low ? Math.min(existing.low, price) : price,
-                volume: parseInt(msg.day_volume || "0") || existing?.volume || 0,
-                prev_close: prevClose,
-                timestamp: msg.timestamp ? new Date(msg.timestamp * 1000).toISOString() : new Date().toISOString(),
-                source: "ws",
-              },
-            };
+        if (msg.type === "tick" && msg.symbol) {
+          enqueueTick(msg.symbol, {
+            last: msg.last ?? msg.price,
+            bid: msg.bid,
+            ask: msg.ask,
+            open: msg.open,
+            high: msg.high,
+            low: msg.low,
+            volume: msg.volume,
+            exchange_ts: msg.exchange_ts ?? msg.timestamp,
+            source: "ws" as const,
+            provider: msg.provider || "railway",
+            sequence: msg.sequence,
           });
+        } else if (msg.type === "status") {
+          if (msg.status === "subscribed" || msg.status === "connected") {
+            reconnectCount.current = 0;
+            setStreamStatus("connected");
+            setIsRealtime(true);
+          } else if (msg.status === "error") {
+            console.warn("[WS] Server error:", msg.message);
+          }
         }
-      } catch {
-        // Ignore parse errors
-      }
+        // heartbeat — ignore
+      } catch { /* ignore parse errors */ }
     };
 
-    ws.onerror = (e) => {
-      console.warn("[WS] Error:", e);
-      if (mountedRef.current) setWsStatus("error");
+    ws.onerror = () => {
+      if (mountedRef.current) setStreamStatus("error");
     };
 
     ws.onclose = () => {
-      console.log("[WS] Disconnected");
       if (!mountedRef.current) return;
-      setWsStatus("disconnected");
-      setSubscribeSuccess(false);
+      setStreamStatus("disconnected");
+      setIsRealtime(false);
       wsRef.current = null;
       stopHeartbeat();
-
-      // Don't reconnect if subscribe permanently failed
-      if (subscribeFailed.current) return;
-
-      if (reconnectCount.current < MAX_RECONNECT_ATTEMPTS) {
-        reconnectCount.current++;
-        const delay = Math.min(RECONNECT_DELAY_MS * Math.pow(2, reconnectCount.current - 1), 60000);
-        console.log(`[WS] Reconnecting in ${delay}ms (attempt ${reconnectCount.current})`);
-        reconnectTimer.current = setTimeout(() => connectRef.current?.(), delay);
-      } else {
-        console.warn("[WS] Max reconnect attempts reached, using REST fallback");
-        setWsStatus("error");
-      }
+      scheduleReconnect();
     };
-  };
+  }, [cleanup, setStreamStatus, setIsRealtime, subscribedSymbols, stopHeartbeat, scheduleReconnect]);
+
+  // ═══ Finnhub fallback mode ═══
+  const connectFinnhub = useCallback(async () => {
+    if (!mountedRef.current) return;
+    cleanup();
+    setStreamStatus("connecting");
+
+    // Get API key from edge function
+    if (!apiKeyRef.current) {
+      try {
+        const { data: tokenData, error } = await supabase.functions.invoke("get-ws-token");
+        if (!mountedRef.current) return;
+        if (error || !tokenData?.token) {
+          console.warn("[WS] Failed to get Finnhub token:", error);
+          setStreamStatus("error");
+          return;
+        }
+        apiKeyRef.current = tokenData.token;
+      } catch (e) {
+        console.warn("[WS] get-ws-token error:", e);
+        if (mountedRef.current) setStreamStatus("error");
+        return;
+      }
+    }
+
+    const ws = new WebSocket(`wss://ws.finnhub.io?token=${apiKeyRef.current}`);
+    wsRef.current = ws;
+
+    ws.onopen = () => {
+      if (!mountedRef.current) { ws.close(); return; }
+      console.log("[WS] Connected to Finnhub");
+
+      // Subscribe to US equities (VIX not available on Finnhub free tier)
+      const symbols = Array.from(subscribedSymbols).filter(s => s !== "VIX");
+      symbols.forEach(sym => {
+        ws.send(JSON.stringify({ type: "subscribe", symbol: sym }));
+      });
+
+      reconnectCount.current = 0;
+      setStreamStatus("connected");
+      setIsRealtime(true);
+
+      heartbeatTimer.current = setInterval(() => {
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: "ping" }));
+        }
+      }, HEARTBEAT_INTERVAL_MS);
+    };
+
+    ws.onmessage = (event) => {
+      if (!mountedRef.current) return;
+      try {
+        const msg = JSON.parse(event.data);
+        if (msg.type === "trade" && msg.data?.length > 0) {
+          // Finnhub sends array of trades
+          for (const trade of msg.data) {
+            const sym = trade.s;
+            if (!sym) continue;
+            enqueueTick(sym, {
+              last: trade.p,
+              volume: trade.v,
+              exchange_ts: new Date(trade.t).toISOString(),
+              source: "ws" as const,
+              provider: "finnhub",
+            });
+          }
+        }
+        // ping response — ignore
+      } catch { /* ignore */ }
+    };
+
+    ws.onerror = () => {
+      if (mountedRef.current) setStreamStatus("error");
+    };
+
+    ws.onclose = () => {
+      if (!mountedRef.current) return;
+      setStreamStatus("disconnected");
+      setIsRealtime(false);
+      wsRef.current = null;
+      stopHeartbeat();
+      scheduleReconnect();
+    };
+  }, [cleanup, setStreamStatus, setIsRealtime, subscribedSymbols, stopHeartbeat, scheduleReconnect]);
+
+  // Decide which mode to use
+  connectRef.current = RAILWAY_WS_URL ? connectRailway : (FINNHUB_FALLBACK ? connectFinnhub : undefined);
 
   useEffect(() => {
     mountedRef.current = true;
     connectRef.current?.();
     return () => {
       mountedRef.current = false;
-      if (reconnectTimer.current) clearTimeout(reconnectTimer.current);
-      stopHeartbeat();
-      if (wsRef.current) {
-        wsRef.current.onclose = null;
-        wsRef.current.close();
-      }
+      cleanup();
     };
-  }, []);
-
-  // Keep prev_close ref updated from REST (no state mutation)
-  useEffect(() => {
-    if (restData) {
-      for (const [sym, rd] of Object.entries(restData as Record<string, any>)) {
-        if (rd?.prev_close && !firstPriceRef.current[sym]) {
-          firstPriceRef.current[sym] = rd.prev_close;
-        }
-      }
-    }
-  }, [restData]);
-
-  // REST as base, WS data overrides only when source === "ws"
-  const wsEntries = Object.fromEntries(
-    Object.entries(data).filter(([_, v]) => v.source === "ws")
-  );
-  const mergedData = { ...((restData as MarketDataMap) || {}), ...wsEntries };
-
-  return {
-    data: mergedData,
-    wsStatus,
-    isRealtime: subscribeSuccess && wsStatus === "connected",
-  };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 }
