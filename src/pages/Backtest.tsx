@@ -1,317 +1,46 @@
-import { useState, useRef, useCallback, useEffect } from "react";
 import { useOptimizationResults, useTrackedSymbols } from "@/hooks/use-trading-data";
 import { cn } from "@/lib/utils";
-import { supabase } from "@/integrations/supabase/client";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "@/hooks/use-toast";
 import { SmartOptimizationProgressCard } from "@/components/backtest/OptimizationProgress";
 import SymbolSearch from "@/components/backtest/SymbolSearch";
-import {
-  runSmartOptimization,
-  getOptimizationStages,
-  type SmartOptimizationProgress,
-  type StageStatus,
-  type StageResult,
-} from "@/lib/optimizer/smartOptimizer";
-import { NNE_PRESET_CONFIG } from "@/lib/optimizer/presetConfigs";
-import { TrainTestSplitAgent } from "@/lib/optimizer/trainTestSplitAgent";
-import { TestThresholdAgent } from "@/lib/optimizer/testThresholdAgent";
-import type { SymbolData, Candle, PeriodSplit } from "@/lib/optimizer/types";
-
-const HISTORY_TARGET_YEARS = 5;
-const HISTORY_TARGET_BARS = 35000;
-const MARKET_DATA_INTERVAL = "15min";
-const MARKET_DATA_PAGE_SIZE = 1000;
-
-interface MarketDataSummary {
-  barCount: number;
-  oldestTimestamp: string | null;
-}
-
-function getHistoryTargetDate(): Date {
-  const targetDate = new Date();
-  targetDate.setFullYear(targetDate.getFullYear() - HISTORY_TARGET_YEARS);
-  return targetDate;
-}
-
-async function getMarketDataSummary(symbol: string): Promise<MarketDataSummary> {
-  const [{ count, error: countError }, { data: oldestRows, error: oldestError }] = await Promise.all([
-    supabase
-      .from('market_data')
-      .select('id', { count: 'exact', head: true })
-      .eq('symbol', symbol)
-      .eq('interval', MARKET_DATA_INTERVAL),
-    supabase
-      .from('market_data')
-      .select('timestamp')
-      .eq('symbol', symbol)
-      .eq('interval', MARKET_DATA_INTERVAL)
-      .order('timestamp', { ascending: true })
-      .limit(1),
-  ]);
-
-  if (countError) throw new Error(`שגיאה בבדיקת כמות נתונים: ${countError.message}`);
-  if (oldestError) throw new Error(`שגיאה בבדיקת ההיסטוריה: ${oldestError.message}`);
-
-  return {
-    barCount: count || 0,
-    oldestTimestamp: oldestRows?.[0]?.timestamp ?? null,
-  };
-}
-
-function needsHistoricalTopUp(summary: MarketDataSummary): boolean {
-  if (summary.barCount < HISTORY_TARGET_BARS) return true;
-  if (!summary.oldestTimestamp) return true;
-  return new Date(summary.oldestTimestamp) > getHistoryTargetDate();
-}
+import { useOptimizationStore, allStages } from "@/stores/optimizationStore";
+import { useCallback, useEffect, useRef } from "react";
 
 export default function BacktestPage() {
   const { data: optimizations = [] } = useOptimizationResults();
   const { data: tracked = [] } = useTrackedSymbols();
   const queryClient = useQueryClient();
-  const abortRef = useRef<AbortController | null>(null);
+  const lastToastRef = useRef<string>('');
 
-  // Smart optimization UI state
-  const allStages = getOptimizationStages();
-  const [isRunning, setIsRunning] = useState(false);
-  const [currentSymbol, setCurrentSymbol] = useState('');
-  const [enabledStages, setEnabledStages] = useState<boolean[]>(() => allStages.map(() => true));
-  const [stageStatuses, setStageStatuses] = useState<StageStatus[]>(() =>
-    allStages.map(s => ({ stageNumber: s.stageNumber, stageName: s.name, status: 'pending' as const }))
-  );
-  const [stageResults, setStageResults] = useState<StageResult[]>([]);
-  const [smartProgress, setSmartProgress] = useState<SmartOptimizationProgress | null>(null);
-  const [stageProgressMap, setStageProgressMap] = useState<{ [stageNumber: number]: { current: number; total: number } }>({});
-  const [overallCombinations, setOverallCombinations] = useState<{ current: number; total: number }>({ current: 0, total: 0 });
-  const [elapsedTime, setElapsedTime] = useState(0);
-  const [combinationsPerSecond, setCombinationsPerSecond] = useState(0);
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const startTimeRef = useRef<number>(0);
-  const lastComboCountRef = useRef<number>(0);
-  const lastComboTimeRef = useRef<number>(0);
+  const {
+    isRunning, currentSymbol, enabledStages, stageStatuses, stageResults,
+    smartProgress, stageProgressMap, overallCombinations, elapsedTime,
+    combinationsPerSecond, error,
+    runOptimization, stopOptimization, toggleStage,
+  } = useOptimizationStore();
 
-  // Elapsed timer
+  // Show error toast
   useEffect(() => {
-    if (isRunning) {
-      startTimeRef.current = Date.now();
-      timerRef.current = setInterval(() => {
-        setElapsedTime((Date.now() - startTimeRef.current) / 1000);
-      }, 1000);
-    } else {
-      if (timerRef.current) clearInterval(timerRef.current);
+    if (error && error !== lastToastRef.current) {
+      lastToastRef.current = error;
+      toast({ title: '❌ שגיאה', description: error, variant: 'destructive' });
     }
-    return () => { if (timerRef.current) clearInterval(timerRef.current); };
-  }, [isRunning]);
+  }, [error]);
 
-  const handleStageToggle = useCallback((stageIndex: number, enabled: boolean) => {
-    setEnabledStages(prev => {
-      const next = [...prev];
-      next[stageIndex] = enabled;
-      return next;
-    });
-  }, []);
+  const handleRunOptimization = useCallback((symbol: string) => {
+    runOptimization(symbol, queryClient);
+  }, [runOptimization, queryClient]);
 
   const handleSkipStage = useCallback(() => {
-    // The skip is handled via abort + re-run logic; for now just log
     console.log('[Backtest] Skip stage requested');
   }, []);
-
-  const handleStop = useCallback(() => {
-    abortRef.current?.abort();
-    setIsRunning(false);
-  }, []);
-
-  const resetState = useCallback(() => {
-    setStageStatuses(allStages.map(s => ({ stageNumber: s.stageNumber, stageName: s.name, status: 'pending' as const })));
-    setStageResults([]);
-    setSmartProgress(null);
-    setStageProgressMap({});
-    setOverallCombinations({ current: 0, total: 0 });
-    setElapsedTime(0);
-    setCombinationsPerSecond(0);
-    lastComboCountRef.current = 0;
-    lastComboTimeRef.current = 0;
-  }, [allStages]);
-
-  const runOptimization = useCallback(async (symbol: string) => {
-    if (isRunning) return;
-
-    const controller = new AbortController();
-    abortRef.current = controller;
-
-    resetState();
-    setIsRunning(true);
-    setCurrentSymbol(symbol);
-
-    try {
-      const summary = await getMarketDataSummary(symbol);
-
-      if (needsHistoricalTopUp(summary)) {
-        const { data: dlResult, error: dlError } = await supabase.functions.invoke('download-historical-data', {
-          body: { symbol, target_years: HISTORY_TARGET_YEARS, target_bars: HISTORY_TARGET_BARS },
-        });
-        if (dlError) throw new Error(`שגיאה בהורדת נתונים: ${dlError.message}`);
-        const syncedBars = dlResult?.total_bars ?? dlResult?.bars_downloaded ?? summary.barCount;
-        if (syncedBars < 200) throw new Error(`לא מספיק נתונים: ${syncedBars || 0} bars`);
-        queryClient.invalidateQueries({ queryKey: ['tracked_symbols'] });
-        toast({ title: `📊 ${symbol}`, description: `${syncedBars.toLocaleString()} bars (${(dlResult?.bars_added || 0).toLocaleString()} חדשים)` });
-      }
-
-      // Load all bars with pagination
-      let allBars: any[] = [];
-      let offset = 0;
-      while (true) {
-        if (controller.signal.aborted) throw new DOMException('Aborted', 'AbortError');
-        const { data: page, error: pageErr } = await supabase
-          .from('market_data')
-          .select('timestamp, open, high, low, close, volume')
-          .eq('symbol', symbol)
-          .eq('interval', MARKET_DATA_INTERVAL)
-          .order('timestamp', { ascending: true })
-          .range(offset, offset + MARKET_DATA_PAGE_SIZE - 1);
-        if (pageErr) throw new Error(`שגיאה בטעינת נתונים: ${pageErr.message}`);
-        if (!page || page.length === 0) break;
-        allBars.push(...page);
-        offset += page.length;
-        if (page.length < MARKET_DATA_PAGE_SIZE) break;
-      }
-
-      if (allBars.length < 200) throw new Error(`לא מספיק נתונים ל-${symbol}: ${allBars.length} bars`);
-      console.log(`[Backtest] Loaded ${allBars.length.toLocaleString()} bars for ${symbol}`);
-
-      const candles: Candle[] = allBars.map(bar => ({
-        timestamp: new Date(bar.timestamp).getTime(),
-        open: bar.open, high: bar.high, low: bar.low, close: bar.close,
-        volume: bar.volume || 0,
-      }));
-
-      // Train/Test split
-      const splitAgent = new TrainTestSplitAgent();
-      await splitAgent.load();
-      const trainPercent = splitAgent.getRecommendedSplit('15min');
-
-      const splitIdx = Math.min(candles.length - 1, Math.max(1, Math.floor(candles.length * (trainPercent / 100))));
-      const periodSplit: PeriodSplit = {
-        trainStartDate: new Date(candles[0].timestamp),
-        trainEndDate: new Date(candles[splitIdx - 1].timestamp),
-        testStartDate: new Date(candles[splitIdx].timestamp),
-        testEndDate: new Date(candles[candles.length - 1].timestamp),
-        trainPercent,
-      };
-
-      const symbolData: SymbolData[] = [{ symbol, candles, startDate: new Date(candles[0].timestamp), endDate: new Date(candles[candles.length - 1].timestamp) }];
-
-      // Run optimizer
-      const result = await runSmartOptimization(
-        symbolData, NNE_PRESET_CONFIG, periodSplit, 'single', {},
-        (progress) => {
-          setSmartProgress(progress);
-          
-          // Update stage statuses
-          setStageStatuses(prev => {
-            const next = [...prev];
-            for (let i = 0; i < next.length; i++) {
-              if (i + 1 < progress.currentStage) {
-                if (next[i].status !== 'completed' && next[i].status !== 'skipped') next[i].status = 'completed';
-              } else if (i + 1 === progress.currentStage) {
-                next[i].status = 'running';
-              }
-            }
-            return next;
-          });
-
-          // Update stage progress map
-          setStageProgressMap(prev => ({
-            ...prev,
-            [progress.currentStage]: { current: progress.current, total: progress.total },
-          }));
-
-          // Overall combos
-          setOverallCombinations({ current: progress.current, total: progress.total });
-
-          // Speed calc
-          const now = Date.now();
-          if (now - lastComboTimeRef.current > 2000) {
-            const dt = (now - lastComboTimeRef.current) / 1000;
-            const dc = progress.current - lastComboCountRef.current;
-            if (dt > 0 && dc > 0) setCombinationsPerSecond(dc / dt);
-            lastComboCountRef.current = progress.current;
-            lastComboTimeRef.current = now;
-          }
-        },
-        controller.signal,
-        false, 'profit', true, true,
-        enabledStages,
-      );
-
-      if (controller.signal.aborted) {
-        setIsRunning(false);
-        return;
-      }
-
-      // Evaluate with TestThresholdAgent
-      const best = result.finalResult.bestForProfit;
-      if (best) {
-        const trainReturn = best.totalTrainReturn;
-        const testReturn = best.totalTestReturn;
-        const trainResult = best.trainResults[0]?.result;
-        const testResult = best.testResults[0]?.result;
-        const winRate = testResult?.winRate || trainResult?.winRate || 0;
-        const maxDrawdown = testResult?.maxDrawdown || trainResult?.maxDrawdown || 0;
-        const sharpeRatio = testResult?.sharpeRatio || trainResult?.sharpeRatio || 0;
-        const totalTrades = (trainResult?.totalTrades || 0) + (testResult?.totalTrades || 0);
-
-        const thresholdAgent = new TestThresholdAgent();
-        await thresholdAgent.load();
-        const evaluation = thresholdAgent.evaluate({ trainReturn, testReturn, winRate, maxDrawdown, sharpeRatio, totalTrades });
-
-        const overfit = trainReturn > 0 ? Math.abs(trainReturn - testReturn) / trainReturn : 0;
-        const overfitRisk = overfit < 0.3 ? 'low' : overfit < 0.6 ? 'medium' : 'high';
-
-        await supabase.from('optimization_results').insert({
-          symbol,
-          parameters: best.parameters as any,
-          train_return: trainReturn,
-          test_return: testReturn,
-          is_active: evaluation.passed,
-          overfit_risk: overfitRisk,
-          win_rate: winRate,
-          max_drawdown: maxDrawdown,
-          sharpe_ratio: sharpeRatio,
-          total_trades: totalTrades,
-          agent_decision: evaluation.passed ? 'approved' : 'rejected',
-          agent_confidence: evaluation.score,
-        });
-
-        queryClient.invalidateQueries({ queryKey: ['optimization_results'] });
-
-        toast({
-          title: `${evaluation.passed ? '✅' : '❌'} ${symbol} — ציון ${evaluation.score.toFixed(0)}/100`,
-          description: `Train: ${trainReturn.toFixed(1)}% | Test: ${testReturn.toFixed(1)}%`,
-        });
-      }
-
-      // Update stage results from optimizer result
-      if (result.stageResults) setStageResults(result.stageResults);
-
-      // Mark all stages completed
-      setStageStatuses(prev => prev.map(s => s.status === 'running' ? { ...s, status: 'completed' as const } : s));
-      setIsRunning(false);
-    } catch (err: any) {
-      if (err.name === 'AbortError' || abortRef.current?.signal.aborted) {
-        setIsRunning(false);
-        return;
-      }
-      setIsRunning(false);
-      toast({ title: '❌ שגיאה', description: err.message, variant: 'destructive' });
-    }
-  }, [isRunning, queryClient, enabledStages, resetState]);
 
   const showProgress = isRunning || stageResults.length > 0;
 
   return (
     <div className="space-y-4">
-      <SymbolSearch onSelect={runOptimization} disabled={isRunning} />
+      <SymbolSearch onSelect={handleRunOptimization} disabled={isRunning} />
 
       <div className="flex justify-between items-center">
         <span className="text-base font-semibold">S&P 500 — {tracked.length || "~420"} מניות</span>
@@ -322,7 +51,6 @@ export default function BacktestPage() {
         💡 חפש מניה למעלה או לחץ בגריד להרצת אופטימיזציה אוטומטית | <span className="text-trading-profit">✅ עבר</span> · <span className="text-trading-loss">❌ נכשל</span> · ⬜ ממתין
       </div>
 
-      {/* Inline progress card — no modal */}
       {showProgress && (
         <SmartOptimizationProgressCard
           stages={stageStatuses}
@@ -331,11 +59,11 @@ export default function BacktestPage() {
           progress={smartProgress}
           stageResults={stageResults}
           onSkipStage={handleSkipStage}
-          onStop={handleStop}
+          onStop={stopOptimization}
           elapsedTime={elapsedTime}
           isRunning={isRunning}
           enabledStages={enabledStages}
-          onStageToggle={handleStageToggle}
+          onStageToggle={toggleStage}
           stageProgress={stageProgressMap}
           overallCombinations={overallCombinations}
           combinationsPerSecond={combinationsPerSecond}
@@ -356,7 +84,7 @@ export default function BacktestPage() {
             return (
               <div
                 key={s.symbol}
-                onClick={() => runOptimization(s.symbol)}
+                onClick={() => handleRunOptimization(s.symbol)}
                 className={cn(
                   "rounded-lg p-1.5 text-center cursor-pointer transition-all text-xs hover:scale-105",
                   isOptimizing && "animate-pulse ring-2 ring-primary"
@@ -404,10 +132,14 @@ export default function BacktestPage() {
                       {(o.test_return || 0) >= 0 ? "+" : ""}{(o.test_return || 0).toFixed(1)}%
                     </span>
                     <span className="font-mono w-[45px]">{o.win_rate || 0}%</span>
-                    <span className="font-mono text-trading-loss w-[50px]">{(o.max_drawdown || 0).toFixed(1)}%</span>
-                    <span className="font-mono w-[50px]">{(o.agent_confidence || 0).toFixed(0)}</span>
-                    <span className="badge-pill" style={{ background: rc + "18", color: rc }}>
-                      {o.is_active ? "✅ עבר" : "❌ נכשל"}
+                    <span className="font-mono w-[50px]" style={{ color: rc }}>
+                      {(o.max_drawdown || 0).toFixed(0)}%
+                    </span>
+                    <span className="font-mono w-[50px]">{o.agent_confidence?.toFixed(0) || '-'}</span>
+                    <span className="flex-1 text-left">
+                      <span className={cn("text-[10px] px-1 rounded", o.is_active ? "bg-trading-profit/20 text-trading-profit" : "bg-trading-loss/20 text-trading-loss")}>
+                        {o.agent_decision === 'approved' ? '✅ מאושר' : '❌ נדחה'}
+                      </span>
                     </span>
                   </div>
                 );
@@ -415,12 +147,8 @@ export default function BacktestPage() {
           </div>
         </div>
       ) : (
-        <div className="surface-card">
-          <div className="empty-state">
-            <div className="empty-state-icon">🔬</div>
-            <div className="empty-state-text">אין תוצאות אופטימיזציה עדיין</div>
-            <div className="empty-state-sub">חפש מניה למעלה או לחץ על מניה בגריד</div>
-          </div>
+        <div className="text-center text-sm text-muted-foreground py-10">
+          אין תוצאות אופטימיזציה — בחר מניה להתחלה
         </div>
       )}
     </div>
