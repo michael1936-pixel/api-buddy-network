@@ -9,10 +9,12 @@ import { X, Play } from "lucide-react";
 interface Props {
   onSelect: (symbol: string) => void;
   onRunQueue?: (symbols: string[]) => void;
+  onAddToQueue?: (symbols: string[]) => void;
   disabled?: boolean;
+  isRunning?: boolean;
 }
 
-export default function SymbolSearch({ onSelect, onRunQueue, disabled }: Props) {
+export default function SymbolSearch({ onSelect, onRunQueue, onAddToQueue, disabled, isRunning }: Props) {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<{ symbol: string; sector?: string | null }[]>([]);
   const [showDropdown, setShowDropdown] = useState(false);
@@ -62,6 +64,11 @@ export default function SymbolSearch({ onSelect, onRunQueue, disabled }: Props) 
 
   const handleRun = () => {
     if (selectedSymbols.length === 0) return;
+    if (isRunning && onAddToQueue) {
+      onAddToQueue(selectedSymbols);
+      setSelectedSymbols([]);
+      return;
+    }
     if (selectedSymbols.length === 1) {
       onSelect(selectedSymbols[0]);
     } else if (onRunQueue) {
@@ -91,7 +98,6 @@ export default function SymbolSearch({ onSelect, onRunQueue, disabled }: Props) 
           onChange={(e) => { setQuery(e.target.value); setShowDropdown(true); }}
           onFocus={() => setShowDropdown(true)}
           onKeyDown={handleKeyDown}
-          disabled={disabled}
           className="text-sm"
           dir="ltr"
         />
@@ -131,9 +137,9 @@ export default function SymbolSearch({ onSelect, onRunQueue, disabled }: Props) 
               </Badge>
             ))}
           </div>
-          <Button size="sm" onClick={handleRun} disabled={disabled} className="gap-1.5 shrink-0">
+          <Button size="sm" onClick={handleRun} className="gap-1.5 shrink-0">
             <Play className="w-3.5 h-3.5" />
-            הרץ {selectedSymbols.length} מניות
+            {isRunning ? `הוסף ${selectedSymbols.length} לתור` : `הרץ ${selectedSymbols.length} מניות`}
           </Button>
         </div>
       )}

@@ -15,7 +15,7 @@ export default {
     extend: {
       fontFamily: {
         sans: ['Heebo', 'system-ui', 'sans-serif'],
-        mono: ['IBM Plex Mono', 'monospace'],
+        mono: ['JetBrains Mono', 'monospace'],
       },
       colors: {
         border: "hsl(var(--border))",
