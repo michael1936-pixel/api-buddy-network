@@ -46,6 +46,9 @@ interface SmartOptimizationProgressProps {
   overallCombinations?: { current: number; total: number };
   combinationsPerSecond?: number;
   symbol?: string;
+  bestTrainReturn?: number | null;
+  bestTestReturn?: number | null;
+  stageEstimates?: Record<number, number>;
 }
 
 const STAGES_PER_ROUND = 7;
