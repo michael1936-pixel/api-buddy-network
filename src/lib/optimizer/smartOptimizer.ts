@@ -1,38 +1,41 @@
-import {
-  SymbolData,
-  PeriodSplit,
-  ExtendedStocksOptimizationConfig,
-  ExtendedStocksStrategyParameters,
-  MultiObjectiveResult,
-  ObjectiveType,
-  ParameterRange
+/**
+ * Smart Optimizer — from server
+ * 3 Rounds, 30 Stages (broad → refine → final)
+ */
+import type {
+  ExtendedStocksOptimizationConfig, ExtendedStocksStrategyParameters,
+  SymbolData, PeriodSplit, MultiObjectiveResult,
 } from './types';
 import {
-  optimizePortfolioWithWorker,
-  OptimizationProgressInfo,
+  optimizePortfolio, ProgressInfo, CombinationCache, markBestCacheEntryProtected,
   DEFAULT_EXTENDED_STOCKS_PARAMETERS,
-  estimateCombinationCountForConfig,
 } from './portfolioOptimizer';
+import { preFilterSymbols } from './portfolioSimulator';
+import { IndicatorCacheManager } from './indicatorCache';
 import { createEmptyMultiObjectiveResult, updateMultiObjectiveResult } from './multiObjectiveMetrics';
+import { NNE_PRESET_CONFIG } from './presetConfigs';
+import { getMinConstraint } from './parameterValidation';
 
-export interface OptimizationStage {
-  name: string;
-  description: string;
-  parameters: string[];
-  round: number;
-  stageNumber: number;
+export interface SmartProgressInfo {
+  current: number;
+  total: number;
+  currentStage: number;
+  totalStages: number;
+  stageName: string;
+  stageDescription: string;
+  bestReturn?: number;
+  bestTestReturn?: number;
 }
 
 export interface StageResult {
   stageNumber: number;
   stageName: string;
-  bestParameters: Partial<ExtendedStocksStrategyParameters>;
   bestReturn: number;
   bestTestReturn: number;
   elapsedTime: number;
-  combinationsCount: number;
-  trainResults?: any[];
-  testResults?: any[];
+  plannedCombinations: number;
+  actualTestedCombinations: number;
+  bestParameters: any;
 }
 
 export interface StageStatus {
@@ -45,12 +48,8 @@ export interface StageStatus {
   skipReason?: string;
 }
 
-export interface SmartOptimizationProgress extends OptimizationProgressInfo {
-  stageName: string;
-  stageDescription: string;
-  currentStage: number;
-  totalStages: number;
-}
+// Alias for backward compatibility with Backtest.tsx
+export type SmartOptimizationProgress = SmartProgressInfo;
 
 export interface SmartOptimizationResult {
   finalResult: MultiObjectiveResult;
@@ -59,356 +58,393 @@ export interface SmartOptimizationResult {
   wasPartiallySkipped?: boolean;
 }
 
-export interface SavedState {
-  currentStage: number;
-  totalStages: number;
-  bestParametersSoFar: Partial<ExtendedStocksStrategyParameters>;
-  stageResults: StageResult[];
-  globalBestTrainReturn: number;
-  globalBestTestReturn: number;
-  completedCombinations: number;
-  totalCombinations: number;
-  stageStatuses: StageStatus[];
-  skippedStages: number[];
-  timeSavedBySkips: number;
+interface OptimizationStage {
+  name: string;
+  description: string;
+  parametersToOptimize: string[];
+  roundNumber: 1 | 2 | 3;
+  stepMultiplier?: number;
+  enabledStrategies?: { strat1: boolean; strat2: boolean; strat3: boolean; strat4: boolean; strat5: boolean };
+  disableGlobalFilters?: boolean;
+  isFinalTuning?: boolean;
+  tuneRange?: number;
+  useZoneData?: boolean;
+  round1StageIndex?: number;
+  isStrategyCombinationStage?: boolean;
+  customRanges?: Record<string, { min: number; max: number; step: number }>;
+  filterKey?: string;
 }
 
-const STAGE_TEMPLATES = [
-  {
-    name: 'ניהול עסקת לונג',
-    description: 'אופטימיזציה של סטופ, Break-Even ו-Trailing לפוזיציות לונג',
-    parameters: ['stop_distance_percent_long', 'be_trigger_pct_long', 'trail_rsi_pct_input_long', 'tp_percent_long', 'tp_trail_distance_long']
-  },
-  {
-    name: 'ניהול עסקת שורט',
-    description: 'אופטימיזציה של סטופ, Break-Even ו-Trailing לפוזיציות שורט',
-    parameters: ['stop_distance_percent_short', 'be_trigger_pct_short', 'trail_rsi_pct_input_short', 'tp_percent_short', 'tp_trail_distance_short']
-  },
-  {
-    name: 'אסטרטגיה 1 - EMA Trend',
-    description: 'אופטימיזציה של פרמטרי EMA Trend',
-    parameters: ['s1_ema_fast_len', 's1_ema_mid_len', 's1_rsi_len', 's1_atr_len', 's1_adx_len', 's1_min_conds']
-  },
-  {
-    name: 'אסטרטגיה 2 - בולינגר',
-    description: 'אופטימיזציה של פרמטרי Bollinger Mean Reversion',
-    parameters: ['bb2_ma_len', 'bb2_adx_max', 'bb2_rsi_long_max', 'bb2_rsi_short_min']
-  },
-  {
-    name: 'אסטרטגיה 3 - פריצה',
-    description: 'אופטימיזציה של פרמטרי Range Breakout',
-    parameters: ['s3_breakout_len', 's3_adx_min', 's3_vol_mult', 's3_rsi_long_min', 's3_rsi_short_max']
-  },
-  {
-    name: 'אסטרטגיה 4 - Inside Bar',
-    description: 'אופטימיזציה של פרמטרי Inside Bar Breakout',
-    parameters: ['s4_min_inside_range_pc', 's4_rsi_long_min', 's4_rsi_short_max']
-  },
-  {
-    name: 'אסטרטגיה 5 - ATR Squeeze',
-    description: 'אופטימיזציה של פרמטרי ATR Squeeze Breakout',
-    parameters: ['s5_squeeze_len', 's5_atr_mult_low', 's5_range_len', 's5_vol_mult', 's5_rsi_long_min', 's5_rsi_short_max']
-  }
+const BOOLEAN_PARAMS_SET = new Set([
+  'use_big_bar_filter', 'use_dist_filter', 'avoid_opening_bar', 'block_close_bar',
+  'use_atr_sl', 'enable_rsi_exit', 'bb2_use_trend_filter', 's3_use_vol_filter',
+  's4_use_trend_filter', 's5_use_vol_filter', 'enable_strat2', 'enable_strat3',
+  'enable_strat4', 'enable_strat5'
+]);
+
+const GLOBAL_FILTER_BOOLS = new Set(['use_big_bar_filter', 'use_dist_filter', 'avoid_opening_bar', 'block_close_bar', 'use_atr_sl', 'enable_rsi_exit']);
+
+const STAGE_FILTER_KEYS: Record<number, string> = { 3: 'bb2_use_trend_filter', 4: 's3_use_vol_filter', 5: 's4_use_trend_filter', 6: 's5_use_vol_filter' };
+
+// ═══ Base 7 stages (reused in all 3 rounds) ═══
+const BASE_STAGES: Omit<OptimizationStage, 'roundNumber'>[] = [
+  { name: 'ניהול לונג', description: 'Long management', parametersToOptimize: ['stop_distance_percent_long', 'trail_rsi_pct_input_long', 'tp_percent_long', 'tp_trail_distance_long', 'rsi_long_entry_min', 'rsi_trail_long'] },
+  { name: 'ניהול שורט', description: 'Short management', parametersToOptimize: ['stop_distance_percent_short', 'trail_rsi_pct_input_short', 'tp_percent_short', 'tp_trail_distance_short', 'rsi_short_entry_max', 'rsi_trail_short'] },
+  { name: 'אסטרטגיה 1 EMA Trend', description: 'S1', parametersToOptimize: ['s1_ema_fast_len', 's1_ema_mid_len', 's1_ema_trend_len', 's1_rsi_len', 's1_atr_len', 's1_atr_ma_len', 's1_atr_hi_mult', 's1_adx_len', 's1_adx_strong', 's1_bb_len', 's1_bb_mult', 's1_far_from_bb_pc', 's1_vol_len', 's1_hi_vol_mult', 's1_min_conds'] },
+  { name: 'אסטרטגיה 2 Bollinger', description: 'S2', parametersToOptimize: ['enable_strat2', 'bb2_use_trend_filter', 'bb2_ma_len', 'bb2_adx_max', 'bb2_rsi_long_max', 'bb2_rsi_short_min'] },
+  { name: 'אסטרטגיה 3 Breakout', description: 'S3', parametersToOptimize: ['enable_strat3', 's3_use_vol_filter', 's3_breakout_len', 's3_adx_min', 's3_vol_mult', 's3_rsi_long_min', 's3_rsi_short_max'] },
+  { name: 'אסטרטגיה 4 Inside Bar', description: 'S4', parametersToOptimize: ['enable_strat4', 's4_use_trend_filter', 's4_min_inside_range_pc', 's4_rsi_long_min', 's4_rsi_short_max'] },
+  { name: 'אסטרטגיה 5 ATR Squeeze', description: 'S5', parametersToOptimize: ['enable_strat5', 's5_use_vol_filter', 's5_squeeze_len', 's5_atr_mult_low', 's5_range_len', 's5_vol_mult', 's5_rsi_long_min', 's5_rsi_short_max'] },
 ];
 
-function generateOptimizationStages(): OptimizationStage[] {
+function generateDynamicStages(stepMult: number = 4): OptimizationStage[] {
   const stages: OptimizationStage[] = [];
-  
-  STAGE_TEMPLATES.forEach((template, idx) => {
-    stages.push({ ...template, round: 1, stageNumber: idx + 1 });
+
+  // Round 1: 7 stages — broad scan (step ×4)
+  for (let i = 0; i < 7; i++) {
+    const stratNum = i - 1;
+    stages.push({
+      ...BASE_STAGES[i], roundNumber: 1, stepMultiplier: stepMult,
+      enabledStrategies: { strat1: true, strat2: stratNum === 2, strat3: stratNum === 3, strat4: stratNum === 4, strat5: stratNum === 5 },
+      disableGlobalFilters: true, filterKey: STAGE_FILTER_KEYS[i],
+    });
+  }
+
+  // Round 2: 7 stages — zone fine-tuning
+  for (let i = 0; i < 7; i++) {
+    const stratNum = i - 1;
+    stages.push({
+      ...BASE_STAGES[i], name: `דיוק ${BASE_STAGES[i].name}`, roundNumber: 2,
+      enabledStrategies: { strat1: true, strat2: stratNum === 2, strat3: stratNum === 3, strat4: stratNum === 4, strat5: stratNum === 5 },
+      disableGlobalFilters: true, useZoneData: true, round1StageIndex: i, filterKey: STAGE_FILTER_KEYS[i],
+    });
+  }
+
+  // Round 3: 16 stages
+  // 3.1: Strategy combination
+  stages.push({
+    name: 'שילוב אסטרטגיות', description: 'Find winning combo',
+    parametersToOptimize: ['enable_strat2', 'enable_strat3', 'enable_strat4', 'enable_strat5'],
+    roundNumber: 3, isStrategyCombinationStage: true
   });
-  
-  STAGE_TEMPLATES.forEach((template, idx) => {
-    stages.push({ ...template, description: `דיוק: ${template.description}`, round: 2, stageNumber: 7 + idx + 1 });
-  });
-  
-  STAGE_TEMPLATES.forEach((template, idx) => {
-    stages.push({ ...template, description: `מיקרו: ${template.description}`, round: 3, stageNumber: 14 + idx + 1 });
-  });
-  
+
+  // 3.2: Final fine-tune ±2 (7 stages)
+  for (let i = 0; i < 7; i++) {
+    stages.push({ ...BASE_STAGES[i], name: `דיוק סופי ${BASE_STAGES[i].name}`, roundNumber: 3, isFinalTuning: true, tuneRange: 2 });
+  }
+
+  // 3.3: Zone-based Long/Short
+  stages.push({ ...BASE_STAGES[0], name: 'ניהול לונג Zones', roundNumber: 3, useZoneData: true, round1StageIndex: 0 });
+  stages.push({ ...BASE_STAGES[1], name: 'ניהול שורט Zones', roundNumber: 3, useZoneData: true, round1StageIndex: 1 });
+
+  // 3.4: Global filters (6 stages)
+  stages.push({ name: 'מסנן Big Bar', description: 'Big bar filter', parametersToOptimize: ['use_big_bar_filter', 'big_bar_atr_mult'], roundNumber: 3, customRanges: { big_bar_atr_mult: { min: 2, max: 8, step: 0.1 } } });
+  stages.push({ name: 'מסנן מרחק EMA50', description: 'Distance filter', parametersToOptimize: ['use_dist_filter', 'max_dist_from_ema50_pc'], roundNumber: 3, customRanges: { max_dist_from_ema50_pc: { min: 13, max: 25, step: 0.5 } } });
+  stages.push({ name: 'סטופ ATR', description: 'ATR stop', parametersToOptimize: ['use_atr_sl', 'atr_mult_long', 'atr_mult_short'], roundNumber: 3, customRanges: { atr_mult_long: { min: 0.2, max: 3, step: 0.1 }, atr_mult_short: { min: 0.2, max: 3, step: 0.1 } } });
+  stages.push({ name: 'יציאה RSI', description: 'RSI exit', parametersToOptimize: ['enable_rsi_exit', 'rsi_exit_long', 'rsi_exit_short', 'min_bars_in_trade_exit'], roundNumber: 3, customRanges: { rsi_exit_long: { min: 40, max: 75, step: 1 }, rsi_exit_short: { min: 20, max: 60, step: 1 }, min_bars_in_trade_exit: { min: 2, max: 12, step: 1 } } });
+  stages.push({ name: 'חסימת נרות', description: 'Bar blocking', parametersToOptimize: ['avoid_opening_bar', 'block_close_bar'], roundNumber: 3 });
+  stages.push({ name: 'מרווח עסקאות', description: 'Bars between trades', parametersToOptimize: ['bars_between_trades'], roundNumber: 3, customRanges: { bars_between_trades: { min: 1, max: 15, step: 1 } } });
+
   return stages;
 }
 
-const OPTIMIZATION_STAGES: OptimizationStage[] = generateOptimizationStages();
+// ═══ Config builders ═══
 
-function isParameterRange(value: unknown): value is ParameterRange {
-  return !!value && typeof value === 'object' && 'min' in value && 'max' in value && 'step' in value;
-}
+function expandConfigForStage(stage: OptimizationStage, baseConfig: ExtendedStocksOptimizationConfig, bestParams: Partial<ExtendedStocksStrategyParameters>): ExtendedStocksOptimizationConfig {
+  const cfg = JSON.parse(JSON.stringify(baseConfig)) as ExtendedStocksOptimizationConfig;
+  const stepMult = stage.stepMultiplier || 1;
 
-function clampToRange(value: number, range: ParameterRange): number {
-  return Math.min(range.max, Math.max(range.min, Math.round(value * 1000) / 1000));
-}
-
-function getAnchorParameterValue(
-  param: keyof ExtendedStocksStrategyParameters,
-  range: ParameterRange,
-  bestParams: Partial<ExtendedStocksStrategyParameters>
-): number {
-  const bestValue = bestParams[param];
-  if (typeof bestValue === 'number') {
-    return clampToRange(bestValue, range);
-  }
-
-  const defaultValue = DEFAULT_EXTENDED_STOCKS_PARAMETERS[param];
-  if (typeof defaultValue === 'number') {
-    return clampToRange(defaultValue, range);
-  }
-
-  return clampToRange(range.min, range);
-}
-
-function createFocusedRange(anchor: number, range: ParameterRange, radiusInSteps: number): ParameterRange {
-  const min = Math.max(range.min, anchor - radiusInSteps * range.step);
-  const max = Math.min(range.max, anchor + radiusInSteps * range.step);
-  return {
-    min: clampToRange(min, range),
-    max: clampToRange(max, range),
-    step: range.step,
-  };
-}
-
-function createStageConfig(
-  baseConfig: ExtendedStocksOptimizationConfig,
-  stage: OptimizationStage,
-  bestParams: Partial<ExtendedStocksStrategyParameters>,
-  round: number,
-  stepMultiplier: number = 1,
-  round2Range: number = 1
-): ExtendedStocksOptimizationConfig {
-  const stageConfig = { ...baseConfig } as ExtendedStocksOptimizationConfig;
-  const activeStageParameters = new Set(stage.parameters);
-
-  Object.entries(baseConfig).forEach(([key, value]) => {
-    if (!isParameterRange(value)) return;
-
-    const fixedValue = getAnchorParameterValue(
-      key as keyof ExtendedStocksStrategyParameters,
-      value,
-      bestParams,
-    );
-
-    (stageConfig as any)[key] = {
-      min: fixedValue,
-      max: fixedValue,
-      step: value.step,
-    };
+  // Lock all params NOT in this stage to best values
+  Object.keys(cfg).forEach(key => {
+    const val = (cfg as any)[key];
+    if (typeof val !== 'object' || val === null || !('min' in val)) return;
+    if (stage.parametersToOptimize.includes(key)) return;
+    const best = (bestParams as any)[key];
+    const lockVal = typeof best === 'number' ? Math.max(getMinConstraint(key), best) : Math.max(getMinConstraint(key), val.min);
+    (cfg as any)[key] = { min: lockVal, max: lockVal, step: val.step };
   });
 
-  stage.parameters.forEach(param => {
-    const originalRange = baseConfig[param as keyof ExtendedStocksOptimizationConfig];
-    if (!activeStageParameters.has(param) || !isParameterRange(originalRange)) return;
-
-    const range = originalRange as ParameterRange;
-    const anchorValue = getAnchorParameterValue(
-      param as keyof ExtendedStocksStrategyParameters,
-      range,
-      bestParams,
-    );
-
-    if (round === 1) {
-      const effectiveStep = stepMultiplier > 1 ? range.step * stepMultiplier : range.step;
-      (stageConfig as any)[param] = { min: range.min, max: range.max, step: effectiveStep };
-    } else if (round === 2) {
-      (stageConfig as any)[param] = createFocusedRange(anchorValue, range, round2Range);
-    } else if (round === 3) {
-      (stageConfig as any)[param] = createFocusedRange(anchorValue, range, 1);
+  // Expand optimized params — use preset ranges for Round 1
+  stage.parametersToOptimize.forEach(key => {
+    if (BOOLEAN_PARAMS_SET.has(key)) return;
+    const preset = (NNE_PRESET_CONFIG as any)[key];
+    if (preset && typeof preset === 'object' && 'min' in preset && preset.min !== preset.max) {
+      const step = (preset.step || 1) * stepMult;
+      (cfg as any)[key] = { min: preset.min, max: preset.max, step };
     }
   });
 
-  return stageConfig;
+  // Apply custom ranges
+  if (stage.customRanges) {
+    for (const [k, r] of Object.entries(stage.customRanges)) (cfg as any)[k] = { min: r.min, max: r.max, step: r.step };
+  }
+
+  // Set strategy enables
+  if (stage.enabledStrategies) {
+    cfg.enable_strat1 = stage.enabledStrategies.strat1;
+    (cfg as any).enable_strat2 = stage.enabledStrategies.strat2;
+    (cfg as any).enable_strat3 = stage.enabledStrategies.strat3;
+    (cfg as any).enable_strat4 = stage.enabledStrategies.strat4;
+    (cfg as any).enable_strat5 = stage.enabledStrategies.strat5;
+  }
+
+  // Disable global filters for Round 1 & 2
+  if (stage.disableGlobalFilters) {
+    GLOBAL_FILTER_BOOLS.forEach(k => (cfg as any)[k] = false);
+    (cfg as any).bars_between_trades = { min: 0, max: 0, step: 1 };
+  }
+
+  // Lock booleans to best
+  BOOLEAN_PARAMS_SET.forEach(k => {
+    if (!stage.parametersToOptimize.includes(k) && k in bestParams) (cfg as any)[k] = (bestParams as any)[k];
+  });
+
+  return cfg;
 }
 
-export type SkipStageCallback = () => void;
+function createFineTuneConfig(baseConfig: ExtendedStocksOptimizationConfig, bestParams: Partial<ExtendedStocksStrategyParameters>, paramsToTune: string[], tuneRange = 2): ExtendedStocksOptimizationConfig {
+  const cfg = JSON.parse(JSON.stringify(baseConfig)) as ExtendedStocksOptimizationConfig;
+
+  Object.keys(cfg).forEach(key => {
+    const val = (cfg as any)[key];
+    if (typeof val !== 'object' || val === null || !('min' in val)) return;
+    const best = (bestParams as any)[key];
+    if (paramsToTune.includes(key)) {
+      const numBest = typeof best === 'number' ? best : (val.min + val.max) / 2;
+      const origStep = val.step;
+      const min = Math.max(getMinConstraint(key), numBest - origStep * tuneRange);
+      const max = numBest + origStep * tuneRange;
+      (cfg as any)[key] = { min, max, step: origStep };
+    } else {
+      const lockVal = typeof best === 'number' ? Math.max(getMinConstraint(key), best) : Math.max(getMinConstraint(key), val.min);
+      (cfg as any)[key] = { min: lockVal, max: lockVal, step: val.step };
+    }
+  });
+
+  BOOLEAN_PARAMS_SET.forEach(k => {
+    if (!paramsToTune.includes(k) && k in bestParams) (cfg as any)[k] = (bestParams as any)[k];
+    else if (paramsToTune.includes(k)) (cfg as any)[k] = { values: [false, true] };
+  });
+
+  return cfg;
+}
+
+function collectTopZones(allResults: Array<{ params: ExtendedStocksStrategyParameters; trainReturn: number }>, paramsToOptimize: string[], numZones: number): Record<string, number[]> {
+  const zones: Record<string, number[]> = {};
+  const numericParams = paramsToOptimize.filter(k => !BOOLEAN_PARAMS_SET.has(k));
+
+  for (const paramKey of numericParams) {
+    const valueGroups = new Map<number, { sum: number; count: number }>();
+    for (const r of allResults) {
+      const v = (r.params as any)[paramKey];
+      if (typeof v !== 'number') continue;
+      const rounded = Number(v.toFixed(10));
+      const existing = valueGroups.get(rounded);
+      if (existing) { existing.sum += r.trainReturn; existing.count++; }
+      else valueGroups.set(rounded, { sum: r.trainReturn, count: 1 });
+    }
+    const scored = Array.from(valueGroups.entries()).map(([value, { sum, count }]) => ({ value, avg: sum / count, count })).sort((a, b) => b.avg - a.avg);
+    zones[paramKey] = scored.slice(0, numZones).map(s => s.value).sort((a, b) => a - b);
+  }
+  return zones;
+}
+
+function createZoneConfig(baseConfig: ExtendedStocksOptimizationConfig, zones: Record<string, number[]>, paramsToOptimize: string[], bestParams: Partial<ExtendedStocksStrategyParameters>, expansionSteps: number): ExtendedStocksOptimizationConfig {
+  const cfg = JSON.parse(JSON.stringify(baseConfig)) as ExtendedStocksOptimizationConfig;
+
+  Object.keys(cfg).forEach(key => {
+    const val = (cfg as any)[key];
+    if (typeof val !== 'object' || val === null || !('min' in val)) return;
+    if (paramsToOptimize.includes(key)) return;
+    const best = (bestParams as any)[key];
+    const lockVal = typeof best === 'number' ? Math.max(getMinConstraint(key), best) : Math.max(getMinConstraint(key), val.min);
+    (cfg as any)[key] = { min: lockVal, max: lockVal, step: val.step };
+  });
+
+  for (const key of paramsToOptimize) {
+    if (BOOLEAN_PARAMS_SET.has(key)) continue;
+    const zoneValues = zones[key];
+    if (!zoneValues || zoneValues.length === 0) continue;
+    const origVal = (baseConfig as any)[key];
+    const origStep = origVal?.step || 1;
+    const minC = getMinConstraint(key);
+    const expanded = new Set<number>();
+    zoneValues.forEach(v => {
+      for (let s = -expansionSteps; s <= expansionSteps; s++) {
+        const val = v + origStep * s;
+        if (val >= minC) expanded.add(val);
+      }
+    });
+    const sorted = Array.from(expanded).sort((a, b) => a - b);
+    (cfg as any)[key] = { min: sorted[0], max: sorted[sorted.length - 1], step: origStep, values: sorted };
+  }
+
+  BOOLEAN_PARAMS_SET.forEach(k => {
+    if (!paramsToOptimize.includes(k) && k in bestParams) (cfg as any)[k] = (bestParams as any)[k];
+  });
+
+  return cfg;
+}
+
+// ═══ Main Optimizer Entry Point ═══
 
 export async function runSmartOptimization(
   symbolsData: SymbolData[],
-  config: ExtendedStocksOptimizationConfig,
+  baseConfig: ExtendedStocksOptimizationConfig,
   periodSplit: PeriodSplit,
   mode: string,
   simulationConfig: any,
-  onProgress?: (info: SmartOptimizationProgress) => void,
+  onProgress?: (info: SmartProgressInfo) => void,
   abortSignal?: AbortSignal,
-  useMemory: boolean = false,
-  objective: ObjectiveType = 'profit',
-  enableRound2: boolean = true,
-  enableRound3: boolean = true,
+  _useMemory = false,
+  _objective = 'profit',
+  _enableRound2 = true,
+  _enableRound3 = true,
   enabledStages?: boolean[],
-  onSkipStageCallback?: (callback: SkipStageCallback) => void,
-  onSaveState?: (state: SavedState) => Promise<void>,
-  savedState?: SavedState,
-  stepMultiplier: number = 1,
-  round2Range: number = 1
+  _onSkipStageCallback?: any,
+  _onSaveState?: any,
+  _savedState?: any,
+  round1StepMultiplier: number = 4,
+  numGoodZones: number = 10,
+  zoneExpansionSteps: number = 1,
 ): Promise<SmartOptimizationResult> {
-  console.log('🚀 [SmartOptimizer] Starting smart optimization...');
+  console.log('════════════════════════════════════════');
+  console.log(`Smart Optimizer: ${symbolsData.length} symbols, ${mode} mode`);
+  console.log(`Round 1: step ×${round1StepMultiplier} | Round 2: ${numGoodZones} zones ±${zoneExpansionSteps} | Round 3: combo + fine-tune`);
+  console.log('════════════════════════════════════════');
 
-  let dynamicStages = OPTIMIZATION_STAGES.filter(stage => {
-    if (stage.round === 1) return true;
-    if (stage.round === 2) return enableRound2;
-    if (stage.round === 3) return enableRound3;
-    return false;
-  });
+  const stages = generateDynamicStages(round1StepMultiplier);
+  console.log(`Total stages: ${stages.length} (7 + 7 + ${stages.length - 14})`);
 
-  let bestParametersSoFar: Partial<ExtendedStocksStrategyParameters> = savedState?.bestParametersSoFar || {};
-  let stageResults: StageResult[] = savedState?.stageResults || [];
-  let globalBestTrainReturn = savedState?.globalBestTrainReturn || -Infinity;
-  let globalBestTestReturn = savedState?.globalBestTestReturn || -Infinity;
-  let globalMultiObjectiveResult = createEmptyMultiObjectiveResult(objective);
-  let completedCombinations = savedState?.completedCombinations || 0;
-  let totalCombinations = savedState?.totalCombinations || 0;
+  const stageResults: StageResult[] = [];
+  let bestParams: Partial<ExtendedStocksStrategyParameters> = {};
+  let globalBestTrain = -Infinity, globalBestTest = -Infinity;
+  let globalResult = createEmptyMultiObjectiveResult('profit');
+  const cache: CombinationCache = new Map();
+  const preFiltered = preFilterSymbols(symbolsData, periodSplit);
+  const indicatorCache = new IndicatorCacheManager();
 
-  let stageStatuses: StageStatus[] = savedState?.stageStatuses || dynamicStages.map((stage) => ({
-    stageNumber: stage.stageNumber,
-    stageName: stage.name,
-    status: 'pending' as const
-  }));
+  // Collected zones from Round 1
+  const round1Zones: Record<number, Array<{ params: ExtendedStocksStrategyParameters; trainReturn: number }>> = {};
 
-  let skippedStages: number[] = savedState?.skippedStages || [];
-  let timeSavedBySkips = savedState?.timeSavedBySkips || 0;
-  let hasSkippedAnyStage = skippedStages.length > 0;
+  let activeCombination: { strat1: boolean; strat2: boolean; strat3: boolean; strat4: boolean; strat5: boolean } | null = null;
 
-  const startStageIndex = savedState?.currentStage || 0;
+  for (let si = 0; si < stages.length; si++) {
+    if (abortSignal?.aborted) break;
 
-  for (let stageIndex = startStageIndex; stageIndex < dynamicStages.length; stageIndex++) {
-    if (enabledStages && enabledStages.length > stageIndex && !enabledStages[stageIndex]) {
-      stageStatuses[stageIndex].status = 'skipped';
-      stageStatuses[stageIndex].skipReason = 'הושבת על ידי המשתמש';
-      skippedStages.push(stageIndex);
-      hasSkippedAnyStage = true;
+    // Check if stage is disabled by user
+    if (enabledStages && enabledStages.length > si && !enabledStages[si]) continue;
+
+    const stage = stages[si];
+    const stageStart = Date.now();
+
+    console.log(`\n▶ Stage ${si + 1}/${stages.length}: ${stage.name} (Round ${stage.roundNumber})`);
+
+    // Apply winning combination strategies to Round 3 stages
+    if (activeCombination && stage.roundNumber === 3 && !stage.isStrategyCombinationStage) {
+      stage.enabledStrategies = { ...activeCombination };
+    }
+
+    // Strategy Combination Stage — simplified (test all 16 combos)
+    if (stage.isStrategyCombinationStage) {
+      // Simple: test enable_strat2/3/4/5 as 16 combinations
+      const comboCfg = expandConfigForStage(stage, baseConfig, bestParams);
+      try {
+        const comboResult = await optimizePortfolio(
+          symbolsData, comboCfg, periodSplit, mode, simulationConfig,
+          (info) => onProgress?.({ ...info, current: info.current, total: info.total, currentStage: si + 1, totalStages: stages.length, stageName: stage.name, stageDescription: stage.description, bestReturn: info.bestReturn, bestTestReturn: info.bestTestReturn }),
+          abortSignal, undefined, false, 'profit', cache, si + 1, stage.roundNumber, preFiltered, indicatorCache,
+        );
+        if (comboResult.bestForProfit) {
+          const bp = comboResult.bestForProfit.parameters as ExtendedStocksStrategyParameters;
+          activeCombination = { strat1: bp.enable_strat1, strat2: bp.enable_strat2, strat3: bp.enable_strat3, strat4: bp.enable_strat4, strat5: bp.enable_strat5 };
+          bestParams.enable_strat2 = activeCombination.strat2;
+          bestParams.enable_strat3 = activeCombination.strat3;
+          bestParams.enable_strat4 = activeCombination.strat4;
+          bestParams.enable_strat5 = activeCombination.strat5;
+          if (comboResult.bestForProfit.totalTrainReturn > globalBestTrain) {
+            globalBestTrain = comboResult.bestForProfit.totalTrainReturn;
+            globalBestTest = comboResult.bestForProfit.totalTestReturn;
+          }
+          globalResult = updateMultiObjectiveResult(globalResult, comboResult.bestForProfit);
+          stageResults.push({ stageNumber: si + 1, stageName: stage.name, bestReturn: comboResult.bestForProfit.totalTrainReturn, bestTestReturn: comboResult.bestForProfit.totalTestReturn, elapsedTime: (Date.now() - stageStart) / 1000, plannedCombinations: 16, actualTestedCombinations: 16, bestParameters: { ...bestParams } });
+        }
+      } catch (e: any) {
+        console.warn(`Stage ${si + 1} error: ${e.message}`);
+      }
       continue;
     }
 
-    if (abortSignal?.aborted) {
-      return { finalResult: globalMultiObjectiveResult, stageResults, wasStopped: true, wasPartiallySkipped: hasSkippedAnyStage };
+    // Build config for this stage
+    let stageCfg: ExtendedStocksOptimizationConfig;
+    if (stage.isFinalTuning) {
+      stageCfg = createFineTuneConfig(baseConfig, bestParams, stage.parametersToOptimize, stage.tuneRange || 2);
+    } else if (stage.useZoneData && stage.round1StageIndex !== undefined && round1Zones[stage.round1StageIndex]) {
+      const zones = collectTopZones(round1Zones[stage.round1StageIndex], stage.parametersToOptimize, numGoodZones);
+      stageCfg = createZoneConfig(baseConfig, zones, stage.parametersToOptimize, bestParams, zoneExpansionSteps);
+    } else {
+      stageCfg = expandConfigForStage(stage, baseConfig, bestParams);
     }
 
-    const stage = dynamicStages[stageIndex];
-    const stageStartTime = Date.now();
-
-    console.log(`🔵 [SmartOptimizer] Stage ${stageIndex + 1}/${dynamicStages.length}: ${stage.name}`);
-
-    stageStatuses[stageIndex].status = 'running';
-    stageStatuses[stageIndex].startTime = stageStartTime;
-
-    const stageConfig = createStageConfig(config, stage, bestParametersSoFar, stage.round, stepMultiplier, round2Range);
-    const stageCombinationCount = estimateCombinationCountForConfig(stageConfig);
-    let latestStageProgress: OptimizationProgressInfo = {
-      current: 0,
-      total: stageCombinationCount,
-      percent: 0,
-      bestTrainReturn: Number.isFinite(globalBestTrainReturn) ? globalBestTrainReturn : undefined,
-      bestTestReturn: Number.isFinite(globalBestTestReturn) ? globalBestTestReturn : undefined,
-    };
-
-    totalCombinations = Math.max(totalCombinations, completedCombinations + stageCombinationCount);
+    // Set strategy enables from stage config
+    if (stage.enabledStrategies) {
+      stageCfg.enable_strat1 = stage.enabledStrategies.strat1;
+      (stageCfg as any).enable_strat2 = stage.enabledStrategies.strat2;
+      (stageCfg as any).enable_strat3 = stage.enabledStrategies.strat3;
+      (stageCfg as any).enable_strat4 = stage.enabledStrategies.strat4;
+      (stageCfg as any).enable_strat5 = stage.enabledStrategies.strat5;
+    }
+    if (stage.disableGlobalFilters) {
+      GLOBAL_FILTER_BOOLS.forEach(k => (stageCfg as any)[k] = false);
+      (stageCfg as any).bars_between_trades = { min: 0, max: 0, step: 1 };
+    }
 
     try {
-      const stageResult = await optimizePortfolioWithWorker(
-        symbolsData, stageConfig, periodSplit, mode, simulationConfig,
-        (info) => {
-          latestStageProgress = info;
-
-          if (onProgress) {
-            onProgress({
-              ...info,
-              stageName: stage.name,
-              stageDescription: stage.description,
-              currentStage: stageIndex + 1,
-              totalStages: dynamicStages.length
-            });
-          }
-        },
-        abortSignal, bestParametersSoFar, objective, stageIndex + 1, dynamicStages.length
+      const collectAll = stage.roundNumber === 1;
+      const result = await optimizePortfolio(
+        symbolsData, stageCfg, periodSplit, mode, simulationConfig,
+        (info) => onProgress?.({ ...info, current: info.current, total: info.total, currentStage: si + 1, totalStages: stages.length, stageName: stage.name, stageDescription: stage.description, bestReturn: info.bestReturn, bestTestReturn: info.bestTestReturn }),
+        abortSignal, undefined, false, 'profit', cache, si + 1, stage.roundNumber, preFiltered, indicatorCache, collectAll,
       );
 
-      if (stageResult.bestForProfit) {
-        const bestResult = stageResult.bestForProfit;
-        
-        if (bestResult.parameters) {
-          stage.parameters.forEach(param => {
-            const value = bestResult.parameters[param as keyof ExtendedStocksStrategyParameters];
-            if (value !== undefined) {
-              (bestParametersSoFar as any)[param] = value;
-            }
-          });
-        }
-
-        if (bestResult.totalTrainReturn > globalBestTrainReturn) {
-          globalBestTrainReturn = bestResult.totalTrainReturn;
-          globalBestTestReturn = bestResult.totalTestReturn;
-        }
-
-        globalMultiObjectiveResult = updateMultiObjectiveResult(globalMultiObjectiveResult, bestResult);
-
-        const stageElapsed = (Date.now() - stageStartTime) / 1000;
-        completedCombinations += latestStageProgress.total;
-        totalCombinations = Math.max(totalCombinations, completedCombinations);
-
-        stageResults.push({
-          stageNumber: stageIndex + 1,
-          stageName: stage.name,
-          bestParameters: { ...bestParametersSoFar },
-          bestReturn: bestResult.totalTrainReturn,
-          bestTestReturn: bestResult.totalTestReturn,
-          elapsedTime: stageElapsed,
-          combinationsCount: latestStageProgress.total,
-          trainResults: bestResult.trainResults,
-          testResults: bestResult.testResults
+      if (result.bestForProfit) {
+        const bp = result.bestForProfit.parameters as ExtendedStocksStrategyParameters;
+        // Extract optimized params
+        stage.parametersToOptimize.forEach(param => {
+          const value = (bp as any)[param];
+          if (value !== undefined) (bestParams as any)[param] = value;
         });
 
-        stageStatuses[stageIndex].status = 'completed';
-        stageStatuses[stageIndex].endTime = Date.now();
-        stageStatuses[stageIndex].elapsedTime = stageElapsed * 1000;
-
-        if (onSaveState) {
-          await onSaveState({
-            currentStage: stageIndex + 1,
-            totalStages: dynamicStages.length,
-            bestParametersSoFar, stageResults,
-            globalBestTrainReturn, globalBestTestReturn,
-            completedCombinations,
-            totalCombinations,
-            stageStatuses, skippedStages, timeSavedBySkips
-          });
+        if (result.bestForProfit.totalTrainReturn > globalBestTrain) {
+          globalBestTrain = result.bestForProfit.totalTrainReturn;
+          globalBestTest = result.bestForProfit.totalTestReturn;
         }
-      }
-    } catch (error: any) {
-      const isAbortError = error.message?.toLowerCase().includes('abort') || error.message?.toLowerCase().includes('cancel') || abortSignal?.aborted;
+        globalResult = updateMultiObjectiveResult(globalResult, result.bestForProfit);
+        markBestCacheEntryProtected(cache, si + 1, stage.roundNumber);
 
-      if (isAbortError) {
-        stageStatuses[stageIndex].status = 'skipped';
-        return { finalResult: globalMultiObjectiveResult, stageResults, wasStopped: true, wasPartiallySkipped: hasSkippedAnyStage };
-      }
+        // Save Round 1 results for zone-based tuning in Round 2
+        if (collectAll && result.allTestedResults) {
+          round1Zones[si] = result.allTestedResults;
+        }
 
-      stageStatuses[stageIndex].status = 'skipped';
-      stageStatuses[stageIndex].skipReason = `שגיאה: ${error.message}`;
+        stageResults.push({
+          stageNumber: si + 1, stageName: stage.name,
+          bestReturn: result.bestForProfit.totalTrainReturn, bestTestReturn: result.bestForProfit.totalTestReturn,
+          elapsedTime: (Date.now() - stageStart) / 1000,
+          plannedCombinations: 0, actualTestedCombinations: 0,
+          bestParameters: { ...bestParams },
+        });
+      }
+    } catch (e: any) {
+      if (abortSignal?.aborted) break;
+      console.warn(`Stage ${si + 1} error: ${e.message}`);
     }
   }
 
-  return { finalResult: globalMultiObjectiveResult, stageResults, wasPartiallySkipped: hasSkippedAnyStage };
+  return { finalResult: globalResult, stageResults, wasStopped: abortSignal?.aborted || false };
 }
 
-export function getOptimizationStages(): OptimizationStage[] {
-  return OPTIMIZATION_STAGES;
-}
-
-export function estimateTotalCombinations(
-  config: ExtendedStocksOptimizationConfig,
-  enableRound2: boolean = true,
-  enableRound3: boolean = true
-): number {
-  let total = 0;
-  
-  const stages = OPTIMIZATION_STAGES.filter(stage => {
-    if (stage.round === 1) return true;
-    if (stage.round === 2) return enableRound2;
-    if (stage.round === 3) return enableRound3;
-    return false;
-  });
-
-  stages.forEach(stage => {
-    const stageConfig = createStageConfig(config, stage, {}, stage.round);
-    total += estimateCombinationCountForConfig(stageConfig);
-  });
-
-  return total;
+export function getOptimizationStages(): { name: string; stageNumber: number; round: number }[] {
+  const stages = generateDynamicStages();
+  return stages.map((s, i) => ({ name: s.name, stageNumber: i + 1, round: s.roundNumber }));
 }
