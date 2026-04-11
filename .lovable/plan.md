@@ -1,91 +1,62 @@
 
 
-## העברת אופטימיזציה לשרת Railway — ריצה ברקע
+# תיקון סיבוב 2 + שינויים נוספים לפי המסמך
 
-### הבעיה
-מנוע האופטימיזציה (30 שלבים, אלפי קומבינציות) רץ ב-JavaScript בדפדפן. סוגרים טאב = הכול מת. Edge Functions לא מתאימים כי יש timeout של 60 שניות, והאופטימיזציה לוקחת דקות/שעות.
+## בעיות שנמצאו
 
-### הפתרון
-העברת הריצה לשרת Railway הקיים. הקליינט רק שולח job ומאזין להתקדמות דרך ה-DB.
+### 1. באג ב-enabledStrategies — R1 + R2 (בעיה עיקרית!)
+**קובץ:** `src/lib/optimizer/smartOptimizer.ts`, שורות 104-121
 
-### ארכיטקטורה
-
-```text
-Client                    Edge Function              Railway Server
-  │                           │                           │
-  ├─ POST /trigger-optimize ──►│                           │
-  │   {symbol, config}        ├── POST /api/optimize ────►│
-  │                           │   {symbol, config}        ├── load data from DB
-  │   ◄── {runId, status} ────┤                           ├── run stage 1...30
-  │                           │                           ├── UPDATE optimization_runs 
-  │                           │                           │   (progress every 5s)
-  │   poll optimization_runs  │                           ├── INSERT optimization_results
-  │   every 3s ───────────────┼───────────────────────────┤   (when done)
-  │                           │                           │
-  ▼ show real-time progress   │                           ▼
-```
-
-### שינויים
-
-| קובץ | שינוי |
-|-------|-------|
-| `supabase/functions/trigger-optimization/index.ts` | **חדש** — Edge Function שמקבל `{symbol}`, יוצר שורה ב-`optimization_runs`, ושולח POST לשרת Railway |
-| `src/stores/optimizationStore.ts` | שינוי `runOptimization` — במקום להריץ מקומית, קורא ל-Edge Function וסוקר DB כל 3 שניות |
-| `src/pages/Backtest.tsx` | ללא שינוי משמעותי — ה-store כבר מזין את ה-UI |
-| **Railway server** (חיצוני) | צריך להוסיף endpoint `/api/optimize` שמקבל symbol, טוען נתונים מה-DB, מריץ את מנוע האופטימיזציה, ומעדכן `optimization_runs` |
-
-### פירוט טכני
-
-**1. Edge Function: `trigger-optimization`**
-- מקבל `{ symbol, enabledStages? }` 
-- יוצר שורה ב-`optimization_runs` עם `status: 'queued'`
-- שולח POST ל-`RAILWAY_API_URL/api/optimize` עם `{ symbol, runId, enabledStages }`
-- מחזיר `{ runId }` ללקוח
-
-**2. Store: polling במקום ריצה מקומית**
+הקוד הנוכחי (R1 ו-R2):
 ```typescript
-runOptimization: async (symbol) => {
-  // 1. Trigger via edge function
-  const { data } = await supabase.functions.invoke('trigger-optimization', { body: { symbol } });
-  const runId = data.runId;
-  set({ isRunning: true, activeRunId: runId, currentSymbol: symbol });
-
-  // 2. Poll optimization_runs every 3s
-  const poll = setInterval(async () => {
-    const { data: run } = await supabase
-      .from('optimization_runs').select('*').eq('id', runId).single();
-    
-    set({
-      bestTrainReturn: run.best_train,
-      bestTestReturn: run.best_test,
-      overallCombinations: { current: run.current_combo, total: run.total_combos },
-      smartProgress: { currentStage: run.current_stage, totalStages: run.total_stages, ... },
-    });
-    
-    if (run.status === 'completed' || run.status === 'failed') {
-      clearInterval(poll);
-      set({ isRunning: false });
-    }
-  }, 3000);
+enabledStrategies: { 
+  strat1: true,  // ← תמיד true!
+  strat2: stratNum === 2, 
+  strat3: stratNum === 3, ... 
 }
 ```
 
-**3. Railway server endpoint (קוד שאכין לך להעתיק)**
-- טוען candles מ-`market_data` (כמו שהקליינט עושה היום)
-- מריץ `runSmartOptimization()` (אותו קוד בדיוק)
-- כל 5 שניות: `UPDATE optimization_runs SET current_stage=X, best_train=Y, best_test=Z`
-- בסיום: `INSERT INTO optimization_results` + `UPDATE optimization_runs SET status='completed'`
+**לפי המסמך:**
+- שלבים 1-3 (R1) ו-8-10 (R2): Strat1 only ✓ (תקין)
+- שלב 4/11 (S2 Bollinger): **Strat2 only** — אבל הקוד מפעיל גם Strat1!
+- שלב 5/12 (S3 Breakout): **Strat3 only** — אבל הקוד מפעיל גם Strat1!
+- שלב 6/13 (S4 Inside Bar): **Strat4 only** — אבל הקוד מפעיל גם Strat1!
+- שלב 7/14 (S5 ATR Squeeze): **Strat5 only** — אבל הקוד מפעיל גם Strat1!
 
-**4. Secret נדרש**
-- `RAILWAY_API_URL` — כתובת ה-base URL של שרת Railway (כבר יש `VITE_RAILWAY_WS_URL` ל-WS, צריך גם HTTP)
+**תיקון:** שינוי `strat1` ל-`i <= 2` (true רק עבור Long, Short, ו-S1 EMA).
 
-### מה אצטרך ממך
-1. כתובת ה-HTTP API של שרת Railway (למשל `https://algomaykl-server.up.railway.app`)
-2. האם יש כבר auth/API key על השרת, או שכל בקשה מתקבלת?
+### 2. Zone Collection Scoring
+**קובץ:** `src/lib/optimizer/smartOptimizer.ts`, שורות 232-250
 
-### יתרונות
-- האופטימיזציה רצה 24/7 גם כשהדפדפן סגור
-- ה-UI פשוט סוקר את ה-DB ומציג התקדמות
-- אפשר להריץ כמה מניות ברצף — השרת מנהל את התור
-- הקוד של מנוע האופטימיזציה לא משתנה — רק המיקום שלו
+הקוד ממיין לפי `avg` (ממוצע תשואה) בלבד.
+המסמך מגדיר: `score = avg_return / std × log(count)`
+
+**תיקון:** הוספת חישוב סטיית תקן ו-log(count) לנוסחת הציון.
+
+### 3. שלב 15 — 23 שילובים (לא 16)
+**קובץ:** `src/lib/optimizer/smartOptimizer.ts`, שורות 348-376 + שורה 472
+
+הקוד בודק 16 combos (power set). המסמך מגדיר 23 שילובים ספציפיים (5 singles + 9 pairs + 4 triples + 5 "all except").
+
+**תיקון:** הגדרת מערך של 23 combos מפורשים + נוסחת ציון חדשה.
+
+### 4. נוסחת ציון לשילוב מנצח
+כרגע נבחר לפי profit בלבד. המסמך:
+```
+score = returnScore × overfitPenalty × diversityBonus × (1 + winRateBonus×0.3 + tradeCountBonus×0.2)
+```
+
+### 5. עדכון total_stages ב-Edge Function
+**קובץ:** `supabase/functions/start-optimization/index.ts` — ללא שינוי כי כבר 30 שלבים (תואם).
+
+## קבצים שישתנו
+
+| קובץ | שינוי |
+|-------|--------|
+| `src/lib/optimizer/smartOptimizer.ts` | תיקון enabledStrategies (R1+R2), zone scoring, 23 combos, scoring formula, estimation |
+| `supabase/functions/start-optimization/index.ts` | total_stages נשאר 30 — ללא שינוי |
+
+## סיכום השינויים
+- **4 תיקונים** בקובץ אחד (`smartOptimizer.ts`)
+- התיקון הקריטי ביותר: `strat1: true` תמיד — גורם לכך שאסטרטגיות 2-5 נבדקות ביחד עם S1 במקום בנפרד
 
