@@ -12,7 +12,7 @@ import {
 const INITIAL_CAPITAL = 100_000;
 const COMMISSION_PER_SIDE = 0.001; // 0.1%
 
-function buildIndicators(candles: Candle[], params: ExtendedStocksStrategyParameters): StrategyIndicators {
+export function buildIndicators(candles: Candle[], params: ExtendedStocksStrategyParameters): StrategyIndicators {
   const closes = candles.map(c => c.close);
   const highs = candles.map(c => c.high);
   const lows = candles.map(c => c.low);
@@ -59,8 +59,19 @@ export function runSingleBacktest(
   if (candles.length < 100) {
     return emptyResult(params);
   }
-
   const indicators = buildIndicators(candles, params);
+  return runSingleBacktestWithIndicators(candles, params, indicators);
+}
+
+export function runSingleBacktestWithIndicators(
+  candles: Candle[],
+  params: ExtendedStocksStrategyParameters,
+  indicators: StrategyIndicators
+): BacktestResult {
+  if (candles.length < 100) {
+    return emptyResult(params);
+  }
+
   const lookbacks = computeLookbacks(params);
   const trades: Trade[] = [];
 
