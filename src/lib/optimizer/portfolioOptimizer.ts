@@ -24,7 +24,6 @@ function getParameterRanges(config: ExtendedStocksOptimizationConfig): { name: s
   for (const [key, value] of Object.entries(config)) {
     if (value && typeof value === 'object' && 'min' in value && 'max' in value && 'step' in value) {
       const r = value as ParameterRange;
-      // Only include parameters that actually have a range to search
       if (r.min !== r.max) {
         ranges.push({ name: key, range: r });
       }
@@ -57,32 +56,6 @@ export function estimateCombinationCountForConfig(config: ExtendedStocksOptimiza
   const ranges = getParameterRanges(config);
   if (ranges.length === 0) return 1;
   return ranges.reduce((total, { range }) => total * countRangeValues(range), 1);
-}
-
-function* generateCombinationIterator(
-  ranges: { name: string; range: ParameterRange }[],
-  depth: number = 0,
-  current: Record<string, number> = {}
-): Generator<Record<string, number>> {
-  if (ranges.length === 0) {
-    yield {};
-    return;
-  }
-
-  if (depth >= ranges.length) {
-    yield { ...current };
-    return;
-  }
-
-  const { name, range } = ranges[depth];
-  const totalValues = countRangeValues(range);
-
-  for (let index = 0; index < totalValues; index++) {
-    current[name] = Math.round((range.min + index * range.step) * COMBINATION_PRECISION) / COMBINATION_PRECISION;
-    yield* generateCombinationIterator(ranges, depth + 1, current);
-  }
-
-  delete current[name];
 }
 
 export const DEFAULT_EXTENDED_STOCKS_PARAMETERS: ExtendedStocksStrategyParameters = {
@@ -121,15 +94,11 @@ export const DEFAULT_EXTENDED_STOCKS_PARAMETERS: ExtendedStocksStrategyParameter
   s5_rsi_long_min: 56, s5_rsi_short_max: 41,
 };
 
-function buildParams(
-  fixed: Partial<ExtendedStocksStrategyParameters>,
-  bestSoFar: Partial<ExtendedStocksStrategyParameters>,
-  combo: Record<string, number>
-): ExtendedStocksStrategyParameters {
-  return { ...DEFAULT_EXTENDED_STOCKS_PARAMETERS, ...fixed, ...bestSoFar, ...combo } as ExtendedStocksStrategyParameters;
-}
-
-export async function optimizePortfolioWithWorker(
+/**
+ * Run optimization using a Web Worker (off main thread).
+ * Returns a MultiObjectiveResult just like the old function.
+ */
+export function optimizePortfolioWithWorker(
   symbolsData: SymbolData[],
   config: ExtendedStocksOptimizationConfig,
   periodSplit: PeriodSplit,
@@ -143,66 +112,95 @@ export async function optimizePortfolioWithWorker(
   _totalStages?: number
 ): Promise<MultiObjectiveResult> {
   const obj = objective || 'profit';
-  let multiResult = createEmptyMultiObjectiveResult(obj);
 
-  const ranges = getParameterRanges(config);
-  const fixed = getFixedValues(config);
-  const total = estimateCombinationCountForConfig(config);
-  const progressUpdateInterval = Math.max(5, Math.floor(total / 120));
+  return new Promise((resolve, reject) => {
+    let multiResult = createEmptyMultiObjectiveResult(obj);
 
-  let bestTrainReturn = -Infinity;
-  let bestTestReturn = -Infinity;
-  let current = 0;
-  let lastYieldAt = now();
+    const worker = new Worker(
+      new URL('../../workers/optimizer.worker.ts', import.meta.url),
+      { type: 'module' }
+    );
 
-  for (const combo of generateCombinationIterator(ranges)) {
-    if (abortSignal?.aborted) break;
-
-    current += 1;
-
-    const params = buildParams(fixed, bestParamsSoFar || {}, combo);
-    const result = runPortfolioBacktest(symbolsData, params, periodSplit, mode, simulationConfig);
-
-    const portfolioResult: PortfolioOptimizationResult = {
-      mode: symbolsData.length === 1 ? 'single' : 'portfolio',
-      trainPeriod: periodSplit,
-      trainResults: result.trainResults,
-      testResults: result.testResults,
-      totalTrainReturn: result.totalTrainReturn,
-      totalTestReturn: result.totalTestReturn,
-      overfit: result.totalTrainReturn > 0 ? Math.abs(result.totalTrainReturn - result.totalTestReturn) / result.totalTrainReturn : 0,
-      parameters: params,
-      monthlyPerformance: result.monthlyPerformance,
-      initialCapital: 100_000,
+    const cleanup = () => {
+      worker.terminate();
     };
 
-    multiResult = updateMultiObjectiveResult(multiResult, portfolioResult);
-
-    if (result.totalTrainReturn > bestTrainReturn) {
-      bestTrainReturn = result.totalTrainReturn;
-      bestTestReturn = result.totalTestReturn;
+    // Handle abort
+    if (abortSignal) {
+      if (abortSignal.aborted) {
+        cleanup();
+        resolve(multiResult);
+        return;
+      }
+      abortSignal.addEventListener('abort', () => {
+        cleanup();
+        resolve(multiResult);
+      }, { once: true });
     }
 
-    const shouldReport = current === 1 || current === total || current % progressUpdateInterval === 0;
-    const shouldYield = current % YIELD_EVERY_N === 0 || current === total;
+    worker.onmessage = (e: MessageEvent) => {
+      const msg = e.data;
 
-    if (shouldReport) {
-      onProgress?.({
-        current,
-        total,
-        percent: Math.round((current / total) * 100),
-        bestTrainReturn, bestTestReturn,
-      });
-    }
+      if (msg.type === 'init_complete') {
+        // Start processing
+        worker.postMessage({ type: 'process' });
+        return;
+      }
 
-    if (shouldYield && current < total) {
-      await yieldToUI();
-    }
-  }
+      if (msg.type === 'progress') {
+        onProgress?.({
+          current: msg.current,
+          total: msg.total,
+          percent: msg.percent,
+          bestTrainReturn: msg.bestTrainReturn,
+          bestTestReturn: msg.bestTestReturn,
+        });
+        return;
+      }
 
-  if (!abortSignal?.aborted) {
-    onProgress?.({ current: total, total, percent: 100, bestTrainReturn, bestTestReturn });
-  }
+      if (msg.type === 'results_batch') {
+        // Update multi-objective result with each portfolio result
+        for (const result of msg.results) {
+          multiResult = updateMultiObjectiveResult(multiResult, result);
+        }
+        return;
+      }
 
-  return multiResult;
+      if (msg.type === 'complete') {
+        onProgress?.({
+          current: msg.total || 0,
+          total: msg.total || 0,
+          percent: 100,
+          bestTrainReturn: msg.bestTrainReturn,
+          bestTestReturn: msg.bestTestReturn,
+        });
+        cleanup();
+        resolve(multiResult);
+        return;
+      }
+
+      if (msg.type === 'error') {
+        cleanup();
+        reject(new Error(msg.error));
+        return;
+      }
+    };
+
+    worker.onerror = (err) => {
+      cleanup();
+      reject(new Error(`Worker error: ${err.message}`));
+    };
+
+    // Initialize worker
+    worker.postMessage({
+      type: 'init',
+      symbolsData,
+      periodSplit,
+      mode,
+      simulationConfig,
+      config,
+      bestParamsSoFar: bestParamsSoFar || {},
+      defaultParams: DEFAULT_EXTENDED_STOCKS_PARAMETERS,
+    });
+  });
 }
