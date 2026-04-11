@@ -63,7 +63,7 @@ export default function NewsPage() {
   const vixLive = (liveMarket as any)?.VIX;
   const spyLive = (liveMarket as any)?.SPY;
 
-  const vixCurrent = vixLive?.close || 0;
+  const vixCurrent = vixLive?.last ?? vixLive?.close ?? 0;
   const vixPrev = vixLive?.prev_close || vixCurrent;
   const vixChangePct = vixPrev > 0 ? ((vixCurrent - vixPrev) / vixPrev) * 100 : 0;
   const vixRegime = getVixRegime(vixCurrent);
@@ -71,15 +71,15 @@ export default function NewsPage() {
   const trendIcons: Record<string, string> = { rising: "📈", falling: "📉", stable: "➡️" };
   const trendLabels: Record<string, string> = { rising: "עולה", falling: "יורד", stable: "יציב" };
   const vrc = regimeColors[vixRegime] || "hsl(var(--muted-foreground))";
-  const vixTimestamp = vixLive?.timestamp;
+  const vixTimestamp = vixLive?.exchange_ts ?? vixLive?.timestamp;
 
-  const spyCurrent = spyLive?.close || 0;
+  const spyCurrent = spyLive?.last ?? spyLive?.close ?? 0;
   const spyPrev = spyLive?.prev_close || spyCurrent;
   const spyChangePct = spyPrev > 0 ? ((spyCurrent - spyPrev) / spyPrev) * 100 : 0;
   const spyHigh = spyLive?.high || 0;
   const spyLow = spyLive?.low || 0;
   const spyVolume = spyLive?.volume || 0;
-  const spyTimestamp = spyLive?.timestamp;
+  const spyTimestamp = spyLive?.exchange_ts ?? spyLive?.timestamp;
 
   // Agent stats
   const totalAnalyzed = agentStats?.total_analyzed || 0;

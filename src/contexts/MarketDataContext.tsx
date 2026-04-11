@@ -1,31 +1,38 @@
-// @refresh reset
-import { createContext, useContext, ReactNode } from "react";
-import { useMarketDataWebSocket } from "@/hooks/useMarketDataWebSocket";
-
-interface TickData {
-  symbol: string;
-  close: number;
-  open: number;
-  high: number;
-  low: number;
-  volume: number;
-  prev_close: number;
-  timestamp: string;
-  source: "ws" | "rest";
-}
-
-type MarketDataMap = Record<string, TickData>;
+/**
+ * MarketDataProvider: thin wrapper that starts WS stream + REST fallback.
+ * Components consume data directly from the Zustand store for performance.
+ * This context exists only for backward compatibility of useMarketData() hook.
+ */
+import { createContext, useContext, ReactNode, useMemo } from "react";
+import { useMarketStream } from "@/hooks/useMarketDataWebSocket";
+import { useMarketRestFallback } from "@/hooks/useMarketRestFallback";
+import { useMarketDataStore, MarketDataMap, StreamStatus } from "@/stores/marketDataStore";
 
 interface MarketDataContextValue {
   data: MarketDataMap;
-  wsStatus: "connecting" | "connected" | "disconnected" | "error";
+  wsStatus: StreamStatus;
   isRealtime: boolean;
 }
 
 const MarketDataContext = createContext<MarketDataContextValue | null>(null);
 
 export function MarketDataProvider({ children }: { children: ReactNode }) {
-  const value = useMarketDataWebSocket();
+  // Start WS stream & REST fallback
+  useMarketStream();
+  useMarketRestFallback();
+
+  // Subscribe to store — this is the "slow path" for components that use useMarketData()
+  // For high-frequency components, use useMarketDataStore directly with selectors.
+  const ticks = useMarketDataStore((s) => s.ticks);
+  const streamStatus = useMarketDataStore((s) => s.streamStatus);
+  const isRealtime = useMarketDataStore((s) => s.isRealtime);
+
+  const value = useMemo<MarketDataContextValue>(() => ({
+    data: ticks,
+    wsStatus: streamStatus,
+    isRealtime,
+  }), [ticks, streamStatus, isRealtime]);
+
   return (
     <MarketDataContext.Provider value={value}>
       {children}
