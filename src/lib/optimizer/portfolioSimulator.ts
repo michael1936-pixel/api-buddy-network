@@ -1,459 +1,571 @@
-import type {
-  Candle, SymbolData, PeriodSplit, ExtendedStocksStrategyParameters,
-  BacktestResult, Trade, PortfolioBacktestResult, MonthlyPerformance
-} from './types';
-import { evaluateAllSignals, precomputeSessionMinutes, EngineState, EngineLookbacks } from './strategyEngine';
-import { StrategyIndicators } from './strategies';
-import {
-  calculateRSI, calculateEMA, calculateATR, calculateADX,
-  calculateBBPine, calculateADXPine, calculateEMAPine, calculateVolumeAverage
-} from './indicators';
+/**
+ * SimulatorV2 — Full backtest engine from server
+ * Commission model: max(1¢/share, $2.50) + slippage + overnight fees
+ * Trade management: TP stepping, RSI trailing, breakeven, non-regress stop
+ */
+import type { Candle, ExtendedStocksStrategyParameters, BacktestResult, Trade, PortfolioBacktestResult, MonthlyPerformance, SymbolData, PeriodSplit } from './types';
+import { StrategyIndicators, strategy1_EMATrend, strategy2_BollingerMeanReversion, strategy3_RangeBreakout, strategy4_InsideBarBreakout, strategy5_ATRSqueezeBreakout } from './strategies';
+import { IndicatorCacheManager, PrecomputedData, rollingHighest, rollingLowest } from './indicatorCache';
 
-const INITIAL_CAPITAL = 100_000;
-const COMMISSION_PER_SIDE = 0.001; // 0.1%
-
-export function buildIndicators(candles: Candle[], params: ExtendedStocksStrategyParameters): StrategyIndicators {
-  const closes = candles.map(c => c.close);
-  const highs = candles.map(c => c.high);
-  const lows = candles.map(c => c.low);
-  const volumes = candles.map(c => c.volume);
-
-  const rsi = calculateRSI(closes, params.s1_rsi_len);
-  const ema9 = calculateEMA(closes, params.s1_ema_fast_len);
-  const ema21 = calculateEMA(closes, params.s1_ema_mid_len);
-  const ema50 = calculateEMA(closes, params.s1_ema_trend_len);
-  const ema100 = calculateEMA(closes, 100);
-  const atr = calculateATR(highs, lows, closes, params.s1_atr_len);
-  const atrAvg = calculateEMA(atr, params.s1_atr_ma_len);
-  const adx = calculateADX(highs, lows, closes, params.s1_adx_len);
-  const bb = calculateBBPine(closes, params.s1_bb_len, params.s1_bb_mult);
-  const volumeAvg = calculateVolumeAverage(volumes, params.s1_vol_len);
-
-  // S2 specific indicators
-  const s2Adx = calculateADXPine(highs, lows, closes, params.bb2_adx_len);
-  const s2Bb = calculateBBPine(closes, params.bb2_bb_len, params.bb2_bb_mult);
-  const s2Ema100 = calculateEMAPine(closes, params.bb2_ma_len);
-
-  return {
-    rsi, ema9, ema21, ema50, ema100, atr, atrAvg, adx,
-    bbBasis: bb.basis, bbUpper: bb.upper, bbLower: bb.lower,
-    volumeAvg, highs, lows,
-    s2Adx, s2BbBasis: s2Bb.basis, s2BbUpper: s2Bb.upper, s2BbLower: s2Bb.lower, s2Ema100
-  };
+// ---- Simulation Config ----
+interface SimulationConfig {
+  capital_start: number;
+  enable_commissions: boolean;
+  commission_per_share_cent: number;
+  min_commission_side_usd: number;
+  slippage_pct_side: number;
+  leverage_mode: string;
+  leverage: number;
+  enable_overnight_fee: boolean;
+  overnight_fee_pct: number;
 }
 
-function computeLookbacks(params: ExtendedStocksStrategyParameters): EngineLookbacks {
-  return {
-    s1MinLookback: Math.max(params.s1_ema_trend_len, params.s1_rsi_len, params.s1_atr_len, params.s1_adx_len, params.s1_bb_len) + 5,
-    s2MinLookback: Math.max(params.bb2_bb_len, params.bb2_adx_len, params.bb2_ma_len) + 5,
-    s3MinLookback: params.s3_breakout_len + 5,
-    s4MinLookback: 5,
-    s5MinLookback: Math.max(params.s5_squeeze_len, params.s5_range_len) + 5,
-  };
+const DEFAULT_CONFIG: SimulationConfig = {
+  capital_start: 10000,
+  enable_commissions: true,
+  commission_per_share_cent: 1.0,
+  min_commission_side_usd: 2.5,
+  slippage_pct_side: 0.10,
+  leverage_mode: 'ללא מינוף',
+  leverage: 1,
+  enable_overnight_fee: true,
+  overnight_fee_pct: 0.0393,
+};
+
+function calculateCommission(qty: number, cfg: SimulationConfig): number {
+  if (!cfg.enable_commissions) return 0;
+  return Math.max((qty * cfg.commission_per_share_cent) / 100, cfg.min_commission_side_usd);
 }
 
-export function runSingleBacktest(
-  candles: Candle[],
-  params: ExtendedStocksStrategyParameters
-): BacktestResult {
-  if (candles.length < 100) {
-    return emptyResult(params);
+function getRoundTripCost(capital: number, entryPrice: number, qty: number, cfg: SimulationConfig) {
+  const commEntry = calculateCommission(qty, cfg);
+  const commExit = calculateCommission(qty, cfg);
+  const slippageEntry = (capital * cfg.slippage_pct_side) / 100;
+  const slippageExit = (capital * cfg.slippage_pct_side) / 100;
+  const totalCostUsd = commEntry + commExit + slippageEntry + slippageExit;
+  const totalCostPct = totalCostUsd / capital;
+  return { totalCostUsd, totalCostPct, commEntry, commExit, slippageEntry, slippageExit };
+}
+
+function calculateOvernightFee(position: number, nights: number, notional: number, isLev: boolean, cfg: SimulationConfig): number {
+  if (!cfg.enable_overnight_fee || !isLev || nights <= 0) return 0;
+  return notional * (cfg.overnight_fee_pct / 100) * nights;
+}
+
+function qtyFrom(capital: number, price: number, levMult: number): number {
+  return Math.floor((capital * levMult) / price);
+}
+
+function calculateInitialStopLong(entryPrice: number, entryOpenPrice: number, currentATR: number, use_atr_sl: boolean, eff_sl_pct: number, eff_atr_mult: number) {
+  const baseSlPc = eff_sl_pct / 100;
+  let slPc = baseSlPc;
+  if (use_atr_sl && currentATR > 0) {
+    const atrStopPc = (currentATR / entryPrice) * eff_atr_mult;
+    slPc = Math.max(baseSlPc, atrStopPc);
   }
-  const indicators = buildIndicators(candles, params);
-  return runSingleBacktestWithIndicators(candles, params, indicators);
+  const initialStop = entryOpenPrice * (1 - slPc);
+  return { slPcEntry: slPc, initialStop, baseSl: initialStop };
 }
 
-export function runSingleBacktestWithIndicators(
+function calculateInitialStopShort(entryPrice: number, entryOpenPrice: number, currentATR: number, use_atr_sl: boolean, eff_sl_pct: number, eff_atr_mult: number) {
+  const baseSlPc = eff_sl_pct / 100;
+  let slPc = baseSlPc;
+  if (use_atr_sl && currentATR > 0) {
+    const atrStopPc = (currentATR / entryPrice) * eff_atr_mult;
+    slPc = Math.max(baseSlPc, atrStopPc);
+  }
+  const initialStop = entryOpenPrice * (1 + slPc);
+  return { slPcEntry: slPc, initialStop, baseSl: initialStop };
+}
+
+function checkBreakevenLong(beActive: boolean, high: number, entry: number, pct: number): boolean {
+  if (beActive) return true;
+  return high >= entry + entry * (pct / 100);
+}
+
+function checkBreakevenShort(beActive: boolean, low: number, entry: number, pct: number): boolean {
+  if (beActive) return true;
+  return low <= entry - entry * (pct / 100);
+}
+
+function getStopExecPriceLong(stopAtOpen: number | null, trail: number | null, prefTp: boolean, prevHit: boolean, afterHit: boolean): number | null {
+  if (prefTp && afterHit && trail !== null) return trail;
+  if (prevHit && stopAtOpen !== null) return stopAtOpen;
+  return stopAtOpen ?? trail ?? null;
+}
+
+function getStopExecPriceShort(stopAtOpen: number | null, trail: number | null, prefTp: boolean, prevHit: boolean, afterHit: boolean): number | null {
+  if (prefTp && afterHit && trail !== null) return trail;
+  if (prevHit && stopAtOpen !== null) return stopAtOpen;
+  return stopAtOpen ?? trail ?? null;
+}
+
+/**
+ * Build indicators from precomputed data, adding rolling arrays for S3/S5
+ */
+export function buildIndicatorsFromPrecomputed(precomputed: PrecomputedData, params: ExtendedStocksStrategyParameters): StrategyIndicators {
+  const ind = { ...precomputed.indicators };
+  // Add rolling arrays for S3 and S5 — computed once via deque
+  if (params.enable_strat3 && params.s3_breakout_len > 0) {
+    ind.s3RangeHigh = rollingHighest(precomputed.highs, params.s3_breakout_len);
+    ind.s3RangeLow = rollingLowest(precomputed.lows, params.s3_breakout_len);
+  }
+  if (params.enable_strat5) {
+    if (params.s5_range_len > 0) {
+      ind.s5RangeHigh = rollingHighest(precomputed.highs, params.s5_range_len);
+      ind.s5RangeLow = rollingLowest(precomputed.lows, params.s5_range_len);
+    }
+    // s5AtrMa — rolling SMA of ATR
+    const atrSma = new Array(precomputed.atrArr.length).fill(NaN);
+    const sqLen = params.s5_squeeze_len;
+    if (sqLen > 0) {
+      let sum = 0;
+      for (let i = 0; i < precomputed.atrArr.length; i++) {
+        sum += precomputed.atrArr[i];
+        if (i >= sqLen) sum -= precomputed.atrArr[i - sqLen];
+        if (i >= sqLen - 1) atrSma[i] = sum / sqLen;
+      }
+    }
+    ind.s5AtrMa = atrSma;
+  }
+  return ind;
+}
+
+/**
+ * Run full backtest — server-identical logic with commissions/TP stepping/RSI trailing
+ */
+export function runBacktest(
   candles: Candle[],
   params: ExtendedStocksStrategyParameters,
   indicators: StrategyIndicators,
-  sessionMinutes?: Int16Array
+  cfg: SimulationConfig = DEFAULT_CONFIG,
 ): BacktestResult {
-  if (candles.length < 100) {
-    return emptyResult(params);
-  }
+  if (candles.length < 100) return emptyResult(params, cfg.capital_start);
 
-  const lookbacks = computeLookbacks(params);
+  const closes = candles.map(c => c.close);
+  const highs = candles.map(c => c.high);
+  const lows = candles.map(c => c.low);
+
+  const rsiArr = indicators.rsi;
+  const atrArr = indicators.atr;
+  const emaTrendArr = indicators.ema50;
+  const ema9Arr = indicators.ema9;
+  const ema21Arr = indicators.ema21;
+
+  const s1Min = Math.max(params.s1_ema_trend_len, params.s1_rsi_len, params.s1_atr_len, params.s1_adx_len, params.s1_bb_len) + 5;
+  const s2Min = Math.max(params.bb2_bb_len ?? 20, params.bb2_adx_len ?? 11, params.bb2_ma_len ?? 100) + 5;
+  const s3Min = (params.s3_breakout_len ?? 10) + 5;
+  const s4Min = 5;
+  const s5Min = Math.max(params.s5_squeeze_len ?? 1, params.s5_range_len ?? 10) + 5;
+  const startBar = Math.max(s1Min, s2Min, s3Min, s4Min, s5Min);
+
+  const startCap = cfg.capital_start;
+  const levMult = cfg.leverage_mode !== 'ללא מינוף' ? cfg.leverage : 1;
+  const isLev = levMult > 1;
+
+  let capital = startCap;
+  let peak = startCap;
+  let maxDD = 0;
+  let totalFees = 0;
   const trades: Trade[] = [];
+  let tradeCount = 0;
 
-  let capital = INITIAL_CAPITAL;
-  let peakCapital = INITIAL_CAPITAL;
-  let maxDrawdown = 0;
-  let position = 0; // 0=flat, 1=long, -1=short
-  let entryPrice = 0;
-  let entryBarIndex: number | null = null;
-  let entryTime = 0;
-  let stopPrice = 0;
-  let tpPrice = 0;
-  let breakevenTriggered = false;
-  let highestSinceEntry = 0;
-  let lowestSinceEntry = Infinity;
-  let lastEntryBarIndex: number | null = null;
-  let entryStrategyId = 0;
-  let cooldownBarsLeft = 0;
+  let position = 0;
+  let entryPrice: number | null = null;
+  let entryOpenPrice: number | null = null;
+  let entryQty = 0;
+  let entryNotional = 0;
+  let entryBarIdx = 0;
+  let lastEntryBar = -999;
+  let entrySid: number | null = null;
+  let barsInTrade = 0;
+  let currentTrade: Trade | null = null;
 
-  const state: EngineState = {
-    position: 0,
-    lastEntryBarIndex: null,
-    barIndex: 0,
-    currentATR: 0,
-    currentEmaTrend: 0,
-  };
+  let trailStop: number | null = null;
+  let stopAtBarOpen: number | null = null;
+  let baseSL: number | null = null;
+  let baseSS: number | null = null;
+  let beActive = false;
+  let tpSteps = 0;
+  let trOnlyL: number | null = null;
+  let trOnlyS: number | null = null;
+  let stepStopL: number | null = null;
+  let stepStopS: number | null = null;
 
-  const minLookback = Math.max(lookbacks.s1MinLookback, lookbacks.s2MinLookback, lookbacks.s3MinLookback, lookbacks.s4MinLookback, lookbacks.s5MinLookback);
+  let prevTrailStop: number | null = null;
+  let prevPos = 0;
 
-  for (let i = minLookback; i < candles.length; i++) {
-    const candle = candles[i];
-    const close = candle.close;
+  for (let i = startBar; i < candles.length; i++) {
+    const histStopAtOpen = stopAtBarOpen;
+    const isFlat = position === 0;
+    const spacingOk = i - lastEntryBar >= params.bars_between_trades;
+    const canFlipL = params.allow_flip_S2L && position === -1;
+    const canFlipS = params.allow_flip_L2S && position === 1;
 
-    // Update ATR/EMA for state
-    const atrIdx = i - (candles.length - indicators.atr.length);
-    const emaIdx = i - (candles.length - indicators.ema50.length);
-    state.barIndex = i;
-    state.position = position;
-    state.lastEntryBarIndex = lastEntryBarIndex;
-    state.currentATR = atrIdx >= 0 && atrIdx < indicators.atr.length ? indicators.atr[atrIdx] : 0;
-    state.currentEmaTrend = emaIdx >= 0 && emaIdx < indicators.ema50.length ? indicators.ema50[emaIdx] : 0;
+    const c = candles[i];
+    const cl = closes[i], hi = highs[i], lo = lows[i], op = c.open;
+    const rsi = rsiArr[i];
+    const atr = !isNaN(atrArr[i]) ? atrArr[i] : 0;
+    const ema50 = !isNaN(emaTrendArr[i]) ? emaTrendArr[i] : (i > 0 ? emaTrendArr[i - 1] : NaN);
 
-    // Track trade extremes
-    if (position !== 0) {
-      if (candle.high > highestSinceEntry) highestSinceEntry = candle.high;
-      if (candle.low < lowestSinceEntry) lowestSinceEntry = candle.low;
+    let barOk = true;
+    if (atr > 0 && params.use_big_bar_filter) {
+      barOk = !((hi - lo) > atr * params.big_bar_atr_mult);
+    }
+    let distOk = true;
+    if (params.use_dist_filter && ema50 > 0 && !isNaN(ema50)) {
+      distOk = Math.abs((cl - ema50) / ema50) * 100 <= params.max_dist_from_ema50_pc;
     }
 
-    // === EXIT LOGIC ===
-    if (position === 1) {
-      // Stop loss
-      if (candle.low <= stopPrice) {
-        const exitPrice = stopPrice;
-        const pnlPct = ((exitPrice - entryPrice) / entryPrice) * 100;
-        const commission = capital * COMMISSION_PER_SIDE * 2;
-        capital += capital * (pnlPct / 100) - commission;
-        trades.push({
-          entryTime, entryPrice, exitTime: candle.timestamp, exitPrice,
-          type: 'long', pnl: capital - (capital - capital * (pnlPct / 100) + commission),
-          pnlPct, exitReason: 'stop_loss', stopPrice, tpPrice,
-          breakevenTriggered, entryBarIndex: entryBarIndex!, exitBarIndex: i,
-          entryStrategyId,
-        });
-        position = 0; cooldownBarsLeft = params.cooldown_after_loss_bars;
-        if (capital > peakCapital) peakCapital = capital;
-        const dd = ((peakCapital - capital) / peakCapital) * 100;
-        if (dd > maxDrawdown) maxDrawdown = dd;
-        continue;
-      }
-      // Take profit
-      if (tpPrice > 0 && candle.high >= tpPrice) {
-        const exitPrice = tpPrice;
-        const pnlPct = ((exitPrice - entryPrice) / entryPrice) * 100;
-        const commission = capital * COMMISSION_PER_SIDE * 2;
-        capital += capital * (pnlPct / 100) - commission;
-        trades.push({
-          entryTime, entryPrice, exitTime: candle.timestamp, exitPrice,
-          type: 'long', pnlPct, exitReason: 'take_profit',
-          entryBarIndex: entryBarIndex!, exitBarIndex: i, entryStrategyId,
-        });
-        position = 0;
-        if (capital > peakCapital) peakCapital = capital;
-        continue;
-      }
-      // Breakeven trigger
-      if (!breakevenTriggered && params.be_trigger_pct_long > 0) {
-        const beTriggerPrice = entryPrice * (1 + params.be_trigger_pct_long / 100);
-        if (candle.high >= beTriggerPrice) {
-          breakevenTriggered = true;
-          stopPrice = entryPrice;
-        }
-      }
-      // RSI trailing exit
-      if (params.enable_rsi_exit) {
-        const rsiIdx = i - (candles.length - indicators.rsi.length);
-        if (rsiIdx >= 0 && rsiIdx < indicators.rsi.length) {
-          const rsi = indicators.rsi[rsiIdx];
-          const barsInTrade = i - (entryBarIndex || 0);
-          if (rsi >= params.rsi_exit_long && barsInTrade >= params.min_bars_in_trade_exit) {
-            const pnlPct = ((close - entryPrice) / entryPrice) * 100;
-            const commission = capital * COMMISSION_PER_SIDE * 2;
-            capital += capital * (pnlPct / 100) - commission;
-            trades.push({
-              entryTime, entryPrice, exitTime: candle.timestamp, exitPrice: close,
-              type: 'long', pnlPct, exitReason: 'trailing_stop',
-              entryBarIndex: entryBarIndex!, exitBarIndex: i, entryStrategyId,
-            });
-            position = 0;
-            if (capital > peakCapital) peakCapital = capital;
-            const dd = ((peakCapital - capital) / peakCapital) * 100;
-            if (dd > maxDrawdown) maxDrawdown = dd;
-            continue;
-          }
-        }
-      }
-    } else if (position === -1) {
-      // Stop loss for short
-      if (candle.high >= stopPrice) {
-        const exitPrice = stopPrice;
-        const pnlPct = ((entryPrice - exitPrice) / entryPrice) * 100;
-        const commission = capital * COMMISSION_PER_SIDE * 2;
-        capital += capital * (pnlPct / 100) - commission;
-        trades.push({
-          entryTime, entryPrice, exitTime: candle.timestamp, exitPrice,
-          type: 'short', pnlPct, exitReason: 'stop_loss',
-          entryBarIndex: entryBarIndex!, exitBarIndex: i, entryStrategyId,
-        });
-        position = 0; cooldownBarsLeft = params.cooldown_after_loss_bars;
-        if (capital > peakCapital) peakCapital = capital;
-        const dd = ((peakCapital - capital) / peakCapital) * 100;
-        if (dd > maxDrawdown) maxDrawdown = dd;
-        continue;
-      }
-      // Take profit for short
-      if (tpPrice > 0 && candle.low <= tpPrice) {
-        const exitPrice = tpPrice;
-        const pnlPct = ((entryPrice - exitPrice) / entryPrice) * 100;
-        const commission = capital * COMMISSION_PER_SIDE * 2;
-        capital += capital * (pnlPct / 100) - commission;
-        trades.push({
-          entryTime, entryPrice, exitTime: candle.timestamp, exitPrice,
-          type: 'short', pnlPct, exitReason: 'take_profit',
-          entryBarIndex: entryBarIndex!, exitBarIndex: i, entryStrategyId,
-        });
-        position = 0;
-        if (capital > peakCapital) peakCapital = capital;
-        continue;
-      }
-      // Breakeven trigger for short
-      if (!breakevenTriggered && params.be_trigger_pct_short > 0) {
-        const beTriggerPrice = entryPrice * (1 - params.be_trigger_pct_short / 100);
-        if (candle.low <= beTriggerPrice) {
-          breakevenTriggered = true;
-          stopPrice = entryPrice;
-        }
-      }
-      // RSI trailing exit for short
-      if (params.enable_rsi_exit) {
-        const rsiIdx = i - (candles.length - indicators.rsi.length);
-        if (rsiIdx >= 0 && rsiIdx < indicators.rsi.length) {
-          const rsi = indicators.rsi[rsiIdx];
-          const barsInTrade = i - (entryBarIndex || 0);
-          if (rsi <= params.rsi_exit_short && barsInTrade >= params.min_bars_in_trade_exit) {
-            const pnlPct = ((entryPrice - close) / entryPrice) * 100;
-            const commission = capital * COMMISSION_PER_SIDE * 2;
-            capital += capital * (pnlPct / 100) - commission;
-            trades.push({
-              entryTime, entryPrice, exitTime: candle.timestamp, exitPrice: close,
-              type: 'short', pnlPct, exitReason: 'trailing_stop',
-              entryBarIndex: entryBarIndex!, exitBarIndex: i, entryStrategyId,
-            });
-            position = 0;
-            if (capital > peakCapital) peakCapital = capital;
-            const dd = ((peakCapital - capital) / peakCapital) * 100;
-            if (dd > maxDrawdown) maxDrawdown = dd;
-            continue;
-          }
-        }
-      }
+    let bS1 = false, sS1 = false, bS2 = false, sS2 = false, bS3 = false, sS3 = false, bS4 = false, sS4 = false, bS5 = false, sS5 = false;
+    const simOk = c.timestamp >= (params.simulationStartDate?.getTime() ?? 0);
+
+    if (params.enable_strat1 && i >= s1Min) {
+      const s = strategy1_EMATrend(candles, i, indicators, params);
+      bS1 = simOk && s.buySignal && barOk && distOk && position !== 1 && ((isFlat && spacingOk) || canFlipL);
+      sS1 = simOk && s.sellSignal && barOk && distOk && position !== -1 && ((isFlat && spacingOk) || canFlipS);
+    }
+    if (params.enable_strat2 && i >= s2Min) {
+      const s = strategy2_BollingerMeanReversion(candles, i, indicators, params);
+      bS2 = simOk && s.buySignal && position !== 1 && ((isFlat && spacingOk) || canFlipL);
+      sS2 = simOk && s.sellSignal && position !== -1 && ((isFlat && spacingOk) || canFlipS);
+    }
+    if (params.enable_strat3 && i >= s3Min) {
+      const s = strategy3_RangeBreakout(candles, i, indicators, params);
+      bS3 = simOk && s.buySignal && position !== 1 && ((isFlat && spacingOk) || canFlipL);
+      sS3 = simOk && s.sellSignal && position !== -1 && ((isFlat && spacingOk) || canFlipS);
+    }
+    if (params.enable_strat4 && i >= s4Min) {
+      const s = strategy4_InsideBarBreakout(candles, i, indicators, params);
+      bS4 = simOk && s.buySignal && position !== 1 && ((isFlat && spacingOk) || canFlipL);
+      sS4 = simOk && s.sellSignal && position !== -1 && ((isFlat && spacingOk) || canFlipS);
+    }
+    if (params.enable_strat5 && i >= s5Min) {
+      const s = strategy5_ATRSqueezeBreakout(candles, i, indicators, params);
+      bS5 = simOk && s.buySignal && position !== 1 && ((isFlat && spacingOk) || canFlipL);
+      sS5 = simOk && s.sellSignal && position !== -1 && ((isFlat && spacingOk) || canFlipS);
     }
 
-    // === ENTRY LOGIC ===
-    if (cooldownBarsLeft > 0) { cooldownBarsLeft--; continue; }
+    if (!barOk || !distOk) {
+      bS1 = bS2 = bS3 = bS4 = bS5 = false;
+      sS1 = sS2 = sS3 = sS4 = sS5 = false;
+    }
+    let buy = bS1 || bS2 || bS3 || bS4 || bS5;
+    let sell = sS1 || sS2 || sS3 || sS4 || sS5;
+    if (buy && sell) sell = false; // Tie-break: long priority
 
-    const signals = evaluateAllSignals(candles, i, indicators, params, state, lookbacks, sessionMinutes);
+    // RSI Exit
+    let exitL = false, exitS = false;
+    const prevRSI = i > 0 && !isNaN(rsiArr[i - 1]) ? rsiArr[i - 1] : rsi;
+    if (params.enable_rsi_exit && position === 1 && barsInTrade >= params.min_bars_in_trade_exit) {
+      const e9 = ema9Arr[i], e21 = ema21Arr[i];
+      exitL = !isNaN(e9) && !isNaN(e21) && e9 < e21 && prevRSI > params.rsi_exit_long && rsi < params.rsi_exit_long;
+    }
+    if (params.enable_rsi_exit && position === -1 && barsInTrade >= params.min_bars_in_trade_exit) {
+      const e9 = ema9Arr[i], e21 = ema21Arr[i];
+      exitS = !isNaN(e9) && !isNaN(e21) && e9 > e21 && prevRSI < params.rsi_exit_short && rsi > params.rsi_exit_short;
+    }
 
-    if (signals.buyFinal && position <= 0) {
-      // Close short if flipping
-      if (position === -1) {
-        const pnlPct = ((entryPrice - close) / entryPrice) * 100;
-        const commission = capital * COMMISSION_PER_SIDE * 2;
-        capital += capital * (pnlPct / 100) - commission;
-        trades.push({
-          entryTime, entryPrice, exitTime: candle.timestamp, exitPrice: close,
-          type: 'short', pnlPct, exitReason: 'flip',
-          entryBarIndex: entryBarIndex!, exitBarIndex: i, entryStrategyId,
-        });
-        if (capital > peakCapital) peakCapital = capital;
+    // Entry (flat)
+    if (!currentTrade && position === 0) {
+      if (buy) {
+        entrySid = bS1 ? 1 : bS2 ? 2 : bS3 ? 3 : bS4 ? 4 : bS5 ? 5 : 0;
+        const ep = cl, eop = op, pc = capital;
+        const qty = qtyFrom(pc, ep, levMult);
+        entryQty = qty; entryPrice = ep; entryOpenPrice = eop;
+        entryNotional = qty * ep; entryBarIdx = i; lastEntryBar = i;
+        position = 1;
+        currentTrade = { entryTime: c.timestamp, entryPrice: ep, type: 'long', capitalAtEntry: pc, entryBarIndex: i, entryStrategyId: entrySid };
+        trailStop = null; stopAtBarOpen = null; barsInTrade = 0;
+        tpSteps = 0; beActive = false; trOnlyL = null; stepStopL = null;
+      } else if (sell) {
+        entrySid = sS1 ? 1 : sS2 ? 2 : sS3 ? 3 : sS4 ? 4 : sS5 ? 5 : 0;
+        const ep = cl, eop = op, pc = capital;
+        const qty = qtyFrom(pc, ep, levMult);
+        entryQty = qty; entryPrice = ep; entryOpenPrice = eop;
+        entryNotional = qty * ep; entryBarIdx = i; lastEntryBar = i;
+        position = -1;
+        currentTrade = { entryTime: c.timestamp, entryPrice: ep, type: 'short', capitalAtEntry: pc, entryBarIndex: i, entryStrategyId: entrySid };
+        trailStop = null; stopAtBarOpen = null; barsInTrade = 0;
+        tpSteps = 0; beActive = false; trOnlyS = null; stepStopS = null;
       }
-      // Enter long
-      position = 1;
-      entryPrice = close;
-      entryBarIndex = i;
-      entryTime = candle.timestamp;
-      lastEntryBarIndex = i;
-      entryStrategyId = signals.entryStrategyId;
-      breakevenTriggered = false;
-      highestSinceEntry = candle.high;
-      lowestSinceEntry = candle.low;
+    }
+    if (position !== 0) barsInTrade++;
 
-      if (params.use_atr_sl && state.currentATR > 0) {
-        stopPrice = close - state.currentATR * params.atr_mult_long;
-      } else {
-        stopPrice = close * (1 - params.stop_distance_percent_long / 100);
-      }
-      tpPrice = params.tp_percent_long > 0 ? close * (1 + params.tp_percent_long / 100) : 0;
-    } else if (signals.sellFinal && position >= 0) {
-      // Close long if flipping
+    // Trade management
+    if (currentTrade && entryPrice !== null) {
+      if (!currentTrade.highestPrice) currentTrade.highestPrice = entryPrice;
+      if (!currentTrade.lowestPrice) currentTrade.lowestPrice = entryPrice;
+      currentTrade.highestPrice = Math.max(currentTrade.highestPrice, hi);
+      currentTrade.lowestPrice = Math.min(currentTrade.lowestPrice, lo);
+
+      const exitTrade = (reason: Trade['exitReason'], xp: number, dir: number) => {
+        const pc = capital, nights = i - entryBarIdx;
+        const qty = entryQty > 0 ? entryQty : qtyFrom(pc, entryPrice!, levMult);
+        const pnlG = (xp - entryPrice!) * qty * dir, gpct = pnlG / pc;
+        const costs = getRoundTripCost(pc, entryPrice!, qty, cfg);
+        const onFee = calculateOvernightFee(position, nights, entryNotional, isLev, cfg);
+        const onPct = onFee / pc;
+        const net = gpct - costs.totalCostPct - onPct;
+        capital = pc * (1 + net);
+        totalFees += costs.totalCostUsd + onFee;
+        currentTrade!.exitTime = c.timestamp;
+        currentTrade!.exitPrice = xp;
+        currentTrade!.exitReason = reason;
+        currentTrade!.exitBarIndex = i;
+        currentTrade!.pnlPct = net * 100;
+        currentTrade!.pnl = pc * net;
+        trades.push(currentTrade!);
+        tradeCount++;
+        if (capital > peak) peak = capital;
+        const dd = ((peak - capital) / peak) * 100;
+        if (dd > maxDD) maxDD = dd;
+        currentTrade = null; position = 0; entryPrice = null; entryQty = 0; entryNotional = 0;
+        trailStop = null; trOnlyL = null; trOnlyS = null; stepStopL = null; stepStopS = null;
+        beActive = false; barsInTrade = 0; tpSteps = 0; stopAtBarOpen = null;
+        baseSL = null; baseSS = null; entrySid = null;
+      };
+
       if (position === 1) {
-        const pnlPct = ((close - entryPrice) / entryPrice) * 100;
-        const commission = capital * COMMISSION_PER_SIDE * 2;
-        capital += capital * (pnlPct / 100) - commission;
-        trades.push({
-          entryTime, entryPrice, exitTime: candle.timestamp, exitPrice: close,
-          type: 'long', pnlPct, exitReason: 'flip',
-          entryBarIndex: entryBarIndex!, exitBarIndex: i, entryStrategyId,
-        });
-        if (capital > peakCapital) peakCapital = capital;
-      }
-      // Enter short
-      position = -1;
-      entryPrice = close;
-      entryBarIndex = i;
-      entryTime = candle.timestamp;
-      lastEntryBarIndex = i;
-      entryStrategyId = signals.entryStrategyId;
-      breakevenTriggered = false;
-      highestSinceEntry = candle.high;
-      lowestSinceEntry = candle.low;
+        const bePct = params.be_trigger_pct_long;
+        const trPct = params.trail_rsi_pct_input_long / 100;
+        const rsiThr = params.rsi_trail_long;
+        const isEntry = barsInTrade === 1;
+        if (trailStop === null && isEntry) {
+          const r = calculateInitialStopLong(entryPrice, entryOpenPrice ?? entryPrice, atr, params.use_atr_sl, params.stop_distance_percent_long, params.atr_mult_long);
+          baseSL = r.baseSl; trailStop = r.initialStop;
+        }
+        const tpPct = params.tp_percent_long / 100;
+        const tpTrailDist = params.tp_trail_distance_long;
+        const stepsCrossed = tpPct > 0 ? Math.max(0, Math.floor((hi / entryPrice - 1) / tpPct)) : 0;
+        const opened = position === 1 && prevPos !== 1;
+        stopAtBarOpen = opened ? (baseSL ?? (entryPrice * 0.95)) : (prevTrailStop ?? trailStop ?? baseSL ?? (entryPrice * 0.95));
 
-      if (params.use_atr_sl && state.currentATR > 0) {
-        stopPrice = close + state.currentATR * params.atr_mult_short;
-      } else {
-        stopPrice = close * (1 + params.stop_distance_percent_short / 100);
+        if (!beActive) beActive = checkBreakevenLong(beActive, hi, entryPrice, bePct);
+        if (rsi >= rsiThr) {
+          const tc = currentTrade.highestPrice! * (1 - trPct);
+          trOnlyL = Math.max(trOnlyL ?? (baseSL ?? entryPrice * 0.94), tc);
+          if (trOnlyL >= entryPrice) trOnlyL = Math.max(trOnlyL, entryPrice);
+        }
+        let tpR = false;
+        if (stepsCrossed > tpSteps) {
+          tpR = true; tpSteps = stepsCrossed;
+          stepStopL = entryPrice * (1 + tpPct * tpSteps) * (1 - tpTrailDist / 100);
+        }
+        let pf = trailStop ?? stopAtBarOpen ?? (baseSL ?? entryPrice * 0.98);
+        let fs = pf;
+        if (rsi >= rsiThr && trOnlyL !== null) fs = Math.max(fs, trOnlyL);
+        else if (tpR && stepStopL !== null) fs = Math.max(fs, stepStopL);
+        if (beActive || pf >= entryPrice) fs = Math.max(fs, entryPrice);
+        if (params.non_regress_stop) fs = Math.max(fs, pf);
+        trailStop = fs;
+
+        const spCheck = histStopAtOpen ?? stopAtBarOpen;
+        const sPrev = spCheck !== null && lo <= spCheck;
+        const sAfter = trailStop !== null && lo <= trailStop;
+        const stopHit = opened ? false : (params.prefer_tp_priority ? (sPrev || sAfter) : sPrev);
+
+        let shouldExit = false, xReason: Trade['exitReason'] = 'signal', xPrice = cl;
+        if (params.allow_flip_L2S && sell) { shouldExit = true; xReason = 'flip'; xPrice = cl; }
+        else if (stopHit) { shouldExit = true; xReason = 'stop_loss'; xPrice = getStopExecPriceLong(spCheck, trailStop, params.prefer_tp_priority, sPrev, sAfter) ?? cl; }
+        else if (exitL) { shouldExit = true; xReason = 'signal'; xPrice = cl; }
+
+        if (shouldExit) {
+          exitTrade(xReason, xPrice, 1);
+          if (xReason === 'flip') {
+            entrySid = sS2 ? 2 : sS1 ? 1 : sS3 ? 3 : sS4 ? 4 : sS5 ? 5 : 0;
+            const ep = cl, pc = capital, qty = qtyFrom(pc, ep, levMult);
+            entryQty = qty; entryPrice = ep; entryOpenPrice = op; entryNotional = qty * ep;
+            entryBarIdx = i; lastEntryBar = i; position = -1;
+            currentTrade = { entryTime: c.timestamp, entryPrice: ep, type: 'short', capitalAtEntry: pc, entryBarIndex: i, entryStrategyId: entrySid ?? 0 };
+            barsInTrade = 1; tpSteps = 0;
+            const r = calculateInitialStopShort(ep, op, atr, params.use_atr_sl, params.stop_distance_percent_short, params.atr_mult_short);
+            baseSS = r.baseSl; trailStop = r.initialStop; stopAtBarOpen = baseSS;
+            if (!currentTrade.lowestPrice) currentTrade.lowestPrice = ep;
+            if (!currentTrade.highestPrice) currentTrade.highestPrice = ep;
+            currentTrade.lowestPrice = Math.min(currentTrade.lowestPrice, lo);
+            currentTrade.highestPrice = Math.max(currentTrade.highestPrice, hi);
+          }
+        }
+      } else if (position === -1) {
+        const bePct = params.be_trigger_pct_short;
+        const trPct = params.trail_rsi_pct_input_short / 100;
+        const rsiThr = params.rsi_trail_short;
+        const isEntry = barsInTrade === 1;
+        if (trailStop === null && isEntry) {
+          const r = calculateInitialStopShort(entryPrice, entryOpenPrice ?? entryPrice, atr, params.use_atr_sl, params.stop_distance_percent_short, params.atr_mult_short);
+          baseSS = r.baseSl; trailStop = r.initialStop;
+        }
+        const tpPct = params.tp_percent_short / 100;
+        const tpTrailDist = params.tp_trail_distance_short;
+        const stepsCrossed = tpPct > 0 ? Math.max(0, Math.floor((1 - lo / entryPrice) / tpPct)) : 0;
+        const opened = position === -1 && prevPos !== -1;
+        stopAtBarOpen = opened ? (baseSS ?? (entryPrice * 1.05)) : (prevTrailStop ?? trailStop ?? baseSS ?? (entryPrice * 1.05));
+
+        if (!beActive) beActive = checkBreakevenShort(beActive, lo, entryPrice, bePct);
+        if (rsi <= rsiThr) {
+          const tc = currentTrade.lowestPrice! * (1 + trPct);
+          trOnlyS = Math.min(trOnlyS ?? (baseSS ?? entryPrice * 1.06), tc);
+          if (trOnlyS !== null && trOnlyS <= entryPrice) trOnlyS = Math.min(trOnlyS, entryPrice);
+        }
+        let tpR = false;
+        if (stepsCrossed > tpSteps) {
+          tpR = true; tpSteps = stepsCrossed;
+          stepStopS = entryPrice * (1 - tpPct * tpSteps) * (1 + tpTrailDist / 100);
+        }
+        let pf = trailStop ?? stopAtBarOpen ?? (baseSS ?? entryPrice * 1.02);
+        let fs: number;
+        if (rsi <= rsiThr && trOnlyS !== null) fs = trOnlyS;
+        else if (tpR && stepStopS !== null) fs = stepStopS;
+        else fs = pf;
+        if (beActive || pf <= entryPrice) fs = Math.max(fs, entryPrice);
+        if (params.non_regress_stop) fs = Math.min(fs, pf);
+        trailStop = fs;
+
+        const spCheck = histStopAtOpen ?? stopAtBarOpen;
+        const sPrev = spCheck !== null && hi >= spCheck;
+        const sAfter = trailStop !== null && hi >= trailStop;
+        const stopHit = opened ? false : (params.prefer_tp_priority ? (sPrev || sAfter) : sPrev);
+
+        let shouldExit = false, xReason: Trade['exitReason'] = 'signal', xPrice = cl;
+        if (params.allow_flip_S2L && buy) { shouldExit = true; xReason = 'flip'; xPrice = cl; }
+        else if (stopHit) { shouldExit = true; xReason = 'stop_loss'; xPrice = getStopExecPriceShort(spCheck, trailStop, params.prefer_tp_priority, sPrev, sAfter) ?? cl; }
+        else if (exitS) { shouldExit = true; xReason = 'signal'; xPrice = cl; }
+
+        if (shouldExit) {
+          exitTrade(xReason, xPrice, -1);
+          if (xReason === 'flip') {
+            entrySid = bS2 ? 2 : bS1 ? 1 : bS3 ? 3 : bS4 ? 4 : bS5 ? 5 : 0;
+            const ep = cl, pc = capital, qty = qtyFrom(pc, ep, levMult);
+            entryQty = qty; entryPrice = ep; entryOpenPrice = op; entryNotional = qty * ep;
+            entryBarIdx = i; lastEntryBar = i; position = 1;
+            currentTrade = { entryTime: c.timestamp, entryPrice: ep, type: 'long', capitalAtEntry: pc, entryBarIndex: i, entryStrategyId: entrySid ?? 0 };
+            barsInTrade = 1; tpSteps = 0;
+            const r = calculateInitialStopLong(ep, op, atr, params.use_atr_sl, params.stop_distance_percent_long, params.atr_mult_long);
+            baseSL = r.baseSl; trailStop = r.initialStop; stopAtBarOpen = baseSL;
+            if (!currentTrade.lowestPrice) currentTrade.lowestPrice = ep;
+            if (!currentTrade.highestPrice) currentTrade.highestPrice = ep;
+            currentTrade.highestPrice = Math.max(currentTrade.highestPrice, hi);
+            currentTrade.lowestPrice = Math.min(currentTrade.lowestPrice, lo);
+          }
+        }
       }
-      tpPrice = params.tp_percent_short > 0 ? close * (1 - params.tp_percent_short / 100) : 0;
     }
-
-    // Update drawdown
-    if (capital > peakCapital) peakCapital = capital;
-    const dd = ((peakCapital - capital) / peakCapital) * 100;
-    if (dd > maxDrawdown) maxDrawdown = dd;
+    prevTrailStop = trailStop;
+    prevPos = position;
   }
 
-  // Close open position at end
-  if (position !== 0 && candles.length > 0) {
-    const lastCandle = candles[candles.length - 1];
-    const close = lastCandle.close;
-    const pnlPct = position === 1
-      ? ((close - entryPrice) / entryPrice) * 100
-      : ((entryPrice - close) / entryPrice) * 100;
-    const commission = capital * COMMISSION_PER_SIDE * 2;
-    capital += capital * (pnlPct / 100) - commission;
-    trades.push({
-      entryTime, entryPrice, exitTime: lastCandle.timestamp, exitPrice: close,
-      type: position === 1 ? 'long' : 'short', pnlPct, exitReason: 'end_of_data',
-      entryBarIndex: entryBarIndex!, exitBarIndex: candles.length - 1, entryStrategyId,
-    });
+  // Close open trade at end of data
+  if (currentTrade && entryPrice !== null) {
+    const lc = candles[candles.length - 1], xp = lc.close, dir = position === 1 ? 1 : -1;
+    const pc = capital, qty = entryQty > 0 ? entryQty : qtyFrom(pc, entryPrice, levMult);
+    const pnlG = (xp - entryPrice) * qty * dir, gpct = pnlG / pc;
+    const costs = getRoundTripCost(pc, entryPrice, qty, cfg);
+    const onFee = calculateOvernightFee(position, candles.length - 1 - entryBarIdx, entryNotional, isLev, cfg);
+    const net = gpct - costs.totalCostPct - onFee / pc;
+    capital = pc * (1 + net);
+    totalFees += costs.totalCostUsd + onFee;
+    currentTrade.exitTime = lc.timestamp; currentTrade.exitPrice = xp; currentTrade.exitReason = 'end_of_data';
+    currentTrade.exitBarIndex = candles.length - 1; currentTrade.pnlPct = net * 100; currentTrade.pnl = pc * net;
+    trades.push(currentTrade);
   }
 
-  const winningTrades = trades.filter(t => (t.pnlPct || 0) > 0);
-  const losingTrades = trades.filter(t => (t.pnlPct || 0) <= 0);
-  const longTrades = trades.filter(t => t.type === 'long');
-  const shortTrades = trades.filter(t => t.type === 'short');
-  const avgWin = winningTrades.length > 0 ? winningTrades.reduce((s, t) => s + (t.pnlPct || 0), 0) / winningTrades.length : 0;
-  const avgLoss = losingTrades.length > 0 ? losingTrades.reduce((s, t) => s + Math.abs(t.pnlPct || 0), 0) / losingTrades.length : 0;
-  const profitFactor = avgLoss > 0 ? (avgWin * winningTrades.length) / (avgLoss * losingTrades.length) : winningTrades.length > 0 ? Infinity : 0;
-
-  // Simple Sharpe ratio
-  const returns = trades.map(t => t.pnlPct || 0);
-  const meanReturn = returns.length > 0 ? returns.reduce((a, b) => a + b, 0) / returns.length : 0;
-  const stdReturn = returns.length > 1
-    ? Math.sqrt(returns.reduce((s, r) => s + (r - meanReturn) ** 2, 0) / (returns.length - 1))
-    : 0;
-  const sharpeRatio = stdReturn > 0 ? (meanReturn / stdReturn) * Math.sqrt(252) : 0;
+  // Calc stats
+  const wins = trades.filter(t => (t.pnlPct ?? 0) > 0);
+  const losses = trades.filter(t => (t.pnlPct ?? 0) <= 0);
+  const wr = trades.length > 0 ? (wins.length / trades.length) * 100 : 0;
+  const avgW = wins.length > 0 ? wins.reduce((s, t) => s + (t.pnlPct ?? 0), 0) / wins.length : 0;
+  const avgL = losses.length > 0 ? Math.abs(losses.reduce((s, t) => s + (t.pnlPct ?? 0), 0) / losses.length) : 0;
+  const gP = wins.reduce((s, t) => s + (t.pnl ?? 0), 0);
+  const gL = Math.abs(losses.reduce((s, t) => s + (t.pnl ?? 0), 0));
+  const pf = gL > 0 ? gP / gL : gP > 0 ? Infinity : 0;
+  const tr = ((capital - startCap) / startCap) * 100;
+  const avgR = trades.length > 0 ? trades.reduce((s, t) => s + (t.pnlPct ?? 0), 0) / trades.length : 0;
+  const stdD = trades.length > 0 ? Math.sqrt(trades.reduce((s, t) => s + Math.pow((t.pnlPct ?? 0) - avgR, 2), 0) / trades.length) : 0;
+  const sr = stdD > 0 && trades.length > 0 ? (avgR / stdD) * Math.sqrt(trades.length) : 0;
 
   return {
-    parameters: params,
-    totalReturn: ((capital - INITIAL_CAPITAL) / INITIAL_CAPITAL) * 100,
-    finalCapital: capital,
-    winRate: trades.length > 0 ? (winningTrades.length / trades.length) * 100 : 0,
-    totalTrades: trades.length,
-    longTrades: longTrades.length,
-    shortTrades: shortTrades.length,
-    winningTrades: winningTrades.length,
-    losingTrades: losingTrades.length,
-    sharpeRatio,
-    maxDrawdown,
-    profitFactor,
-    avgWin,
-    avgLoss,
-    totalFeesUsd: trades.length * INITIAL_CAPITAL * COMMISSION_PER_SIDE * 2,
-    trades,
+    parameters: params, totalReturn: tr, finalCapital: capital, winRate: wr,
+    totalTrades: trades.length, longTrades: trades.filter(t => t.type === 'long').length,
+    shortTrades: trades.filter(t => t.type === 'short').length,
+    winningTrades: wins.length, losingTrades: losses.length,
+    sharpeRatio: sr, maxDrawdown: maxDD, profitFactor: pf, avgWin: avgW, avgLoss: avgL,
+    totalFeesUsd: totalFees, trades: [],
   };
 }
 
-function emptyResult(params: ExtendedStocksStrategyParameters): BacktestResult {
+function emptyResult(params: ExtendedStocksStrategyParameters, capital: number): BacktestResult {
   return {
-    parameters: params, totalReturn: 0, finalCapital: INITIAL_CAPITAL,
-    winRate: 0, totalTrades: 0, longTrades: 0, shortTrades: 0,
-    winningTrades: 0, losingTrades: 0, sharpeRatio: 0, maxDrawdown: 0,
-    profitFactor: 0, avgWin: 0, avgLoss: 0, totalFeesUsd: 0, trades: [],
+    parameters: params, totalReturn: 0, finalCapital: capital, winRate: 0,
+    totalTrades: 0, longTrades: 0, shortTrades: 0, winningTrades: 0, losingTrades: 0,
+    sharpeRatio: 0, maxDrawdown: 0, profitFactor: 0, avgWin: 0, avgLoss: 0, totalFeesUsd: 0, trades: [],
   };
 }
 
+// ---- Pre-filter symbols (compute once per optimization run) ----
+export interface PreFilteredSymbolData {
+  symbol: string;
+  trainCandles: Candle[];
+  testCandles: Candle[];
+}
+
+export function preFilterSymbols(symbolsData: SymbolData[], periodSplit: PeriodSplit): PreFilteredSymbolData[] {
+  const trainStart = periodSplit.trainStartDate.getTime();
+  const trainEnd = periodSplit.trainEndDate.getTime();
+  const testStart = periodSplit.testStartDate.getTime();
+  const testEnd = periodSplit.testEndDate.getTime();
+
+  return symbolsData.map(sd => {
+    const trainCandles: Candle[] = [];
+    const testCandles: Candle[] = [];
+    for (const c of sd.candles) {
+      const t = typeof c.timestamp === 'number' ? c.timestamp : new Date(c.timestamp).getTime();
+      if (t >= trainStart && t <= trainEnd) trainCandles.push(c);
+      if (t >= testStart && t <= testEnd) testCandles.push(c);
+    }
+    return { symbol: sd.symbol, trainCandles, testCandles };
+  });
+}
+
+// ---- Portfolio backtest with indicator cache ----
 export function runPortfolioBacktest(
   symbolsData: SymbolData[],
   params: ExtendedStocksStrategyParameters,
   periodSplit: PeriodSplit,
   _mode: string,
-  _simulationConfig: any
+  _simulationConfig: any,
+  preFiltered?: PreFilteredSymbolData[],
+  indicatorCache?: IndicatorCacheManager,
 ): { totalTrainReturn: number; totalTestReturn: number; trainResults: PortfolioBacktestResult[]; testResults: PortfolioBacktestResult[]; monthlyPerformance: MonthlyPerformance[] } {
+  const pf = preFiltered || preFilterSymbols(symbolsData, periodSplit);
+  const cache = indicatorCache || new IndicatorCacheManager();
+  const startCap = DEFAULT_CONFIG.capital_start;
+
   const trainResults: PortfolioBacktestResult[] = [];
   const testResults: PortfolioBacktestResult[] = [];
 
-  for (const sd of symbolsData) {
-    const trainCandles = sd.candles.filter(c => {
-      const t = typeof c.timestamp === 'number' ? c.timestamp : new Date(c.timestamp).getTime();
-      return t >= periodSplit.trainStartDate.getTime() && t <= periodSplit.trainEndDate.getTime();
-    });
-    const testCandles = sd.candles.filter(c => {
-      const t = typeof c.timestamp === 'number' ? c.timestamp : new Date(c.timestamp).getTime();
-      return t >= periodSplit.testStartDate.getTime() && t <= periodSplit.testEndDate.getTime();
-    });
+  for (const sd of pf) {
+    // Get or compute indicators from cache
+    const trainPre = cache.getOrCompute(sd.trainCandles, params);
+    const testPre = cache.getOrCompute(sd.testCandles, params);
 
-    const trainResult = runSingleBacktest(trainCandles, params);
-    const testResult = runSingleBacktest(testCandles, params);
+    // Build strategy-specific indicators (rolling arrays)
+    const trainInd = buildIndicatorsFromPrecomputed(trainPre, params);
+    const testInd = buildIndicatorsFromPrecomputed(testPre, params);
 
-    trainResults.push({ symbol: sd.symbol, result: trainResult, capitalAllocated: INITIAL_CAPITAL, contributionToTotal: trainResult.totalReturn });
-    testResults.push({ symbol: sd.symbol, result: testResult, capitalAllocated: INITIAL_CAPITAL, contributionToTotal: testResult.totalReturn });
+    const trainResult = runBacktest(sd.trainCandles, params, trainInd);
+    const testResult = runBacktest(sd.testCandles, params, testInd);
+
+    trainResults.push({ symbol: sd.symbol, result: trainResult, capitalAllocated: startCap, contributionToTotal: trainResult.totalReturn });
+    testResults.push({ symbol: sd.symbol, result: testResult, capitalAllocated: startCap, contributionToTotal: testResult.totalReturn });
   }
 
-  const totalTrainReturn = trainResults.length > 0
-    ? trainResults.reduce((s, r) => s + r.result.totalReturn, 0) / trainResults.length : 0;
-  const totalTestReturn = testResults.length > 0
-    ? testResults.reduce((s, r) => s + r.result.totalReturn, 0) / testResults.length : 0;
+  const totalTrainReturn = trainResults.length > 0 ? trainResults.reduce((s, r) => s + r.result.totalReturn, 0) / trainResults.length : 0;
+  const totalTestReturn = testResults.length > 0 ? testResults.reduce((s, r) => s + r.result.totalReturn, 0) / testResults.length : 0;
 
-  const monthlyPerformance = [
-    ...calculateMonthlyPerformance(trainResults, 'train'),
-    ...calculateMonthlyPerformance(testResults, 'test'),
-  ];
-
-  return { totalTrainReturn, totalTestReturn, trainResults, testResults, monthlyPerformance };
+  return { totalTrainReturn, totalTestReturn, trainResults, testResults, monthlyPerformance: [] };
 }
 
-export function calculateMonthlyPerformance(
-  results: PortfolioBacktestResult[],
-  phase: 'train' | 'test'
-): MonthlyPerformance[] {
-  const monthly: MonthlyPerformance[] = [];
-
-  for (const pr of results) {
-    const monthMap = new Map<string, { pnl: number; count: number }>();
-    for (const trade of pr.result.trades) {
-      if (!trade.exitTime) continue;
-      const d = new Date(trade.exitTime);
-      const key = `${d.getFullYear()}-${d.getMonth()}`;
-      const existing = monthMap.get(key) || { pnl: 0, count: 0 };
-      existing.pnl += trade.pnlPct || 0;
-      existing.count++;
-      monthMap.set(key, existing);
-    }
-
-    for (const [key, val] of monthMap) {
-      const [year, month] = key.split('-').map(Number);
-      monthly.push({
-        symbol: pr.symbol, year, month,
-        returnPct: val.pnl, endingCapital: 0, tradesCount: val.count, phase,
-      });
-    }
-  }
-
-  return monthly;
+export function calculateMonthlyPerformance(_results: PortfolioBacktestResult[], _phase: 'train' | 'test'): MonthlyPerformance[] {
+  return [];
 }
