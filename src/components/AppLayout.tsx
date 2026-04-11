@@ -18,7 +18,7 @@ const navItems = [
 export default function AppLayout({ children }: { children: ReactNode }) {
   const location = useLocation();
   const { data: marketData, isRealtime } = useMarketData();
-  const { isRunning: optRunning, currentSymbol: optSymbol } = useOptimizationStore();
+  const { isRunning: optRunning, currentSymbol: optSymbol, symbolQueue, queueIndex } = useOptimizationStore();
   const [clock, setClock] = useState("");
 
   useEffect(() => {
@@ -91,7 +91,9 @@ export default function AppLayout({ children }: { children: ReactNode }) {
             {optRunning && (
               <>
                 <span className="text-muted-foreground/50">·</span>
-                <span className="text-primary animate-pulse">🔬 {optSymbol}</span>
+                <span className="text-primary animate-pulse">
+                  🔬 {optSymbol}{symbolQueue.length > 1 ? ` (${queueIndex + 1}/${symbolQueue.length})` : ''}
+                </span>
               </>
             )}
             <span className="text-muted-foreground/50">·</span>

@@ -1,22 +1,26 @@
 import { useState, useRef, useEffect } from "react";
 import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { supabase } from "@/integrations/supabase/client";
+import { X, Play } from "lucide-react";
 
 interface Props {
   onSelect: (symbol: string) => void;
+  onRunQueue?: (symbols: string[]) => void;
   disabled?: boolean;
 }
 
-export default function SymbolSearch({ onSelect, disabled }: Props) {
+export default function SymbolSearch({ onSelect, onRunQueue, disabled }: Props) {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<{ symbol: string; sector?: string | null }[]>([]);
   const [showDropdown, setShowDropdown] = useState(false);
   const [allSymbols, setAllSymbols] = useState<{ symbol: string; sector?: string | null }[]>([]);
+  const [selectedSymbols, setSelectedSymbols] = useState<string[]>([]);
   const inputRef = useRef<HTMLInputElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
-  // Load sp500_symbols on mount
   useEffect(() => {
     supabase.from('sp500_symbols').select('symbol, sector').eq('is_active', true)
       .order('symbol').then(({ data }) => {
@@ -25,23 +29,15 @@ export default function SymbolSearch({ onSelect, disabled }: Props) {
   }, []);
 
   useEffect(() => {
-    if (!query.trim()) {
-      setResults([]);
-      return;
-    }
+    if (!query.trim()) { setResults([]); return; }
     const q = query.toUpperCase().trim();
-    const filtered = allSymbols.filter(s =>
-      s.symbol.startsWith(q)
-    ).slice(0, 10);
-
-    // If no match in SP500, allow custom symbol
+    const filtered = allSymbols.filter(s => s.symbol.startsWith(q)).slice(0, 10);
     if (filtered.length === 0 && q.length >= 1 && q.length <= 5 && /^[A-Z]+$/.test(q)) {
       filtered.push({ symbol: q, sector: 'Custom' });
     }
     setResults(filtered);
   }, [query, allSymbols]);
 
-  // Close dropdown on outside click
   useEffect(() => {
     const handler = (e: MouseEvent) => {
       if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node) &&
@@ -54,9 +50,26 @@ export default function SymbolSearch({ onSelect, disabled }: Props) {
   }, []);
 
   const handleSelect = (symbol: string) => {
+    if (selectedSymbols.includes(symbol)) return;
+    setSelectedSymbols(prev => [...prev, symbol]);
     setQuery("");
     setShowDropdown(false);
-    onSelect(symbol);
+  };
+
+  const handleRemove = (symbol: string) => {
+    setSelectedSymbols(prev => prev.filter(s => s !== symbol));
+  };
+
+  const handleRun = () => {
+    if (selectedSymbols.length === 0) return;
+    if (selectedSymbols.length === 1) {
+      onSelect(selectedSymbols[0]);
+    } else if (onRunQueue) {
+      onRunQueue(selectedSymbols);
+    } else {
+      onSelect(selectedSymbols[0]);
+    }
+    setSelectedSymbols([]);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -69,39 +82,59 @@ export default function SymbolSearch({ onSelect, disabled }: Props) {
   };
 
   return (
-    <div className="relative">
-      <Input
-        ref={inputRef}
-        placeholder="🔍 חפש מניה... (למשל AAPL, TSLA, NVDA)"
-        value={query}
-        onChange={(e) => { setQuery(e.target.value); setShowDropdown(true); }}
-        onFocus={() => setShowDropdown(true)}
-        onKeyDown={handleKeyDown}
-        disabled={disabled}
-        className="text-sm"
-        dir="ltr"
-      />
-      {showDropdown && results.length > 0 && (
-        <div
-          ref={dropdownRef}
-          className="absolute top-full left-0 right-0 z-50 mt-1 rounded-lg border overflow-hidden shadow-lg max-h-[300px] overflow-y-auto"
-          style={{ background: 'hsl(var(--surface))', borderColor: 'hsl(var(--border))' }}
-        >
-          {results.map((r) => (
-            <div
-              key={r.symbol}
-              onClick={() => handleSelect(r.symbol)}
-              className={cn(
-                "px-3 py-2 cursor-pointer flex justify-between items-center text-sm",
-                "hover:bg-primary/10 transition-colors"
-              )}
-            >
-              <span className="font-bold font-mono">{r.symbol}</span>
-              {r.sector && (
-                <span className="text-[10px] text-muted-foreground">{r.sector}</span>
-              )}
-            </div>
-          ))}
+    <div className="space-y-2">
+      <div className="relative">
+        <Input
+          ref={inputRef}
+          placeholder="🔍 חפש מניה... (למשל AAPL, TSLA, NVDA)"
+          value={query}
+          onChange={(e) => { setQuery(e.target.value); setShowDropdown(true); }}
+          onFocus={() => setShowDropdown(true)}
+          onKeyDown={handleKeyDown}
+          disabled={disabled}
+          className="text-sm"
+          dir="ltr"
+        />
+        {showDropdown && results.length > 0 && (
+          <div
+            ref={dropdownRef}
+            className="absolute top-full left-0 right-0 z-50 mt-1 rounded-lg border overflow-hidden shadow-lg max-h-[300px] overflow-y-auto"
+            style={{ background: 'hsl(var(--surface))', borderColor: 'hsl(var(--border))' }}
+          >
+            {results.map((r) => (
+              <div
+                key={r.symbol}
+                onClick={() => handleSelect(r.symbol)}
+                className={cn(
+                  "px-3 py-2 cursor-pointer flex justify-between items-center text-sm",
+                  "hover:bg-primary/10 transition-colors",
+                  selectedSymbols.includes(r.symbol) && "opacity-50"
+                )}
+              >
+                <span className="font-bold font-mono">{r.symbol}</span>
+                {r.sector && (
+                  <span className="text-[10px] text-muted-foreground">{r.sector}</span>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {selectedSymbols.length > 0 && (
+        <div className="flex items-center gap-2 flex-wrap">
+          <div className="flex gap-1 flex-wrap flex-1">
+            {selectedSymbols.map(s => (
+              <Badge key={s} variant="secondary" className="gap-1 text-xs font-mono">
+                {s}
+                <X className="w-3 h-3 cursor-pointer hover:text-destructive" onClick={() => handleRemove(s)} />
+              </Badge>
+            ))}
+          </div>
+          <Button size="sm" onClick={handleRun} disabled={disabled} className="gap-1.5 shrink-0">
+            <Play className="w-3.5 h-3.5" />
+            הרץ {selectedSymbols.length} מניות
+          </Button>
         </div>
       )}
     </div>

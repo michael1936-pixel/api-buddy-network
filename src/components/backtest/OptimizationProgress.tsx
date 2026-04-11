@@ -1,4 +1,5 @@
 import React, { useMemo } from 'react';
+import { cn } from '@/lib/utils';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -46,6 +47,9 @@ interface SmartOptimizationProgressProps {
   overallCombinations?: { current: number; total: number };
   combinationsPerSecond?: number;
   symbol?: string;
+  bestTrainReturn?: number | null;
+  bestTestReturn?: number | null;
+  stageEstimates?: Record<number, number>;
 }
 
 const STAGES_PER_ROUND = 7;
@@ -160,10 +164,11 @@ interface RoundSectionProps {
   currentStage: number;
   stageProgressMap?: { [stageNumber: number]: { current: number; total: number } };
   startIndex: number;
+  stageEstimates?: Record<number, number>;
 }
 
 const RoundSection: React.FC<RoundSectionProps> = ({
-  roundNumber, stages, stageResults, enabledStages, onStageToggle, currentStage, stageProgressMap, startIndex
+  roundNumber, stages, stageResults, enabledStages, onStageToggle, currentStage, stageProgressMap, startIndex, stageEstimates
 }) => {
   const roundInfo = getRoundInfo(roundNumber);
   const [isExpanded, setIsExpanded] = React.useState(roundNumber === 1);
@@ -225,6 +230,7 @@ const RoundSection: React.FC<RoundSectionProps> = ({
                 onToggle={(enabled) => onStageToggle(globalIndex, enabled)}
                 stageProgress={stageProgressData}
                 displayNumber={idx + 1}
+                combinationsEstimate={stageEstimates?.[stage.stageNumber]}
               />
             );
           })}
@@ -238,7 +244,7 @@ export const SmartOptimizationProgressCard: React.FC<SmartOptimizationProgressPr
   stages, currentStage, totalStages, progress, stageResults,
   onSkipStage, onStop, elapsedTime, isRunning, enabledStages, onStageToggle,
   stageProgress: stageProgressMap, preRunMode = false, overallCombinations, 
-  combinationsPerSecond, symbol
+  combinationsPerSecond, symbol, bestTrainReturn, bestTestReturn, stageEstimates
 }) => {
   const overallProgress = useMemo(() => {
     const enabledCount = enabledStages.filter(Boolean).length;
@@ -335,14 +341,14 @@ export const SmartOptimizationProgressCard: React.FC<SmartOptimizationProgressPr
 
       {/* Statistics Boxes */}
       {!preRunMode && (
-        <div className="p-4 grid grid-cols-2 gap-4 border-b border-primary/20">
-          <div className="bg-slate-800/70 rounded-xl p-4 border border-white/10">
-            <div className="flex items-center gap-2 mb-3 justify-end">
-              <h4 className="font-semibold text-white">התקדמות כללית</h4>
+        <div className="p-4 grid grid-cols-3 gap-3 border-b border-primary/20">
+          <div className="bg-slate-800/70 rounded-xl p-3 border border-white/10">
+            <div className="flex items-center gap-2 mb-2 justify-end">
+              <h4 className="font-semibold text-white text-sm">התקדמות כללית</h4>
               <BarChart3 className="w-4 h-4 text-emerald-400" />
             </div>
             <div className="text-right space-y-1">
-              <p className="text-2xl font-bold text-emerald-400 font-mono">
+              <p className="text-xl font-bold text-emerald-400 font-mono">
                 {overallCombinations ? (
                   <>{formatNumber(overallCombinations.current)} / {formatNumber(overallCombinations.total)}</>
                 ) : (
@@ -350,32 +356,39 @@ export const SmartOptimizationProgressCard: React.FC<SmartOptimizationProgressPr
                 )}
               </p>
               <p className="text-xs text-muted-foreground">
-                {overallProgress.toFixed(1)}% מכלל האופטימיזציה
-              </p>
-              <p className="text-xs text-muted-foreground">
-                זמן שלב: {formatTime(elapsedTime)}
+                {overallProgress.toFixed(1)}% | {formatTime(elapsedTime)}
               </p>
             </div>
           </div>
-          <div className="bg-slate-800/70 rounded-xl p-4 border border-white/10">
-            <div className="flex items-center gap-2 mb-3 justify-end">
-              <h4 className="font-semibold text-white">התקדמות שלב נוכחי</h4>
+          <div className="bg-slate-800/70 rounded-xl p-3 border border-white/10">
+            <div className="flex items-center gap-2 mb-2 justify-end">
+              <h4 className="font-semibold text-white text-sm">שלב נוכחי</h4>
               <Flame className="w-4 h-4 text-purple-400" />
             </div>
             <div className="text-right space-y-1">
-              <p className="text-2xl font-bold text-purple-400 font-mono">
+              <p className="text-xl font-bold text-purple-400 font-mono">
                 {progress ? (
                   <>{formatNumber(progress.current)} / {formatNumber(progress.total)}</>
                 ) : '0 / 0'}
               </p>
               <p className="text-xs text-muted-foreground">
-                {stageProgressPct.toFixed(1)}% ({progress ? formatNumber(progress.total) : 0} קומבינציות)
+                {stageProgressPct.toFixed(1)}%
+                {estimatedTimeRemaining ? ` | ~${formatTime(estimatedTimeRemaining)}` : ''}
               </p>
-              {estimatedTimeRemaining && (
-                <p className="text-xs text-muted-foreground">
-                  משוער זמן: {formatTime(estimatedTimeRemaining)}
-                </p>
-              )}
+            </div>
+          </div>
+          <div className="bg-slate-800/70 rounded-xl p-3 border border-white/10">
+            <div className="flex items-center gap-2 mb-2 justify-end">
+              <h4 className="font-semibold text-white text-sm">תוצאה טובה ביותר</h4>
+              <Zap className="w-4 h-4 text-amber-400" />
+            </div>
+            <div className="text-right space-y-1">
+              <p className={cn("text-xl font-bold font-mono", (bestTrainReturn ?? 0) >= 0 ? "text-emerald-400" : "text-red-400")}>
+                Train: {bestTrainReturn != null ? `${bestTrainReturn > 0 ? '+' : ''}${bestTrainReturn.toFixed(1)}%` : '--'}
+              </p>
+              <p className={cn("text-sm font-bold font-mono", (bestTestReturn ?? 0) >= 0 ? "text-blue-400" : "text-red-400")}>
+                Test: {bestTestReturn != null ? `${bestTestReturn > 0 ? '+' : ''}${bestTestReturn.toFixed(1)}%` : '--'}
+              </p>
             </div>
           </div>
         </div>
@@ -384,13 +397,13 @@ export const SmartOptimizationProgressCard: React.FC<SmartOptimizationProgressPr
       {/* Rounds */}
       <div className="p-4 space-y-3 max-h-[350px] overflow-y-auto">
         {stages.length >= STAGES_PER_ROUND && (
-          <RoundSection roundNumber={1} stages={stages} stageResults={stageResults} enabledStages={enabledStages} onStageToggle={onStageToggle} currentStage={currentStage} stageProgressMap={stageProgressMap} startIndex={0} />
+          <RoundSection roundNumber={1} stages={stages} stageResults={stageResults} enabledStages={enabledStages} onStageToggle={onStageToggle} currentStage={currentStage} stageProgressMap={stageProgressMap} startIndex={0} stageEstimates={stageEstimates} />
         )}
         {stages.length >= STAGES_PER_ROUND * 2 && (
-          <RoundSection roundNumber={2} stages={stages} stageResults={stageResults} enabledStages={enabledStages} onStageToggle={onStageToggle} currentStage={currentStage} stageProgressMap={stageProgressMap} startIndex={STAGES_PER_ROUND} />
+          <RoundSection roundNumber={2} stages={stages} stageResults={stageResults} enabledStages={enabledStages} onStageToggle={onStageToggle} currentStage={currentStage} stageProgressMap={stageProgressMap} startIndex={STAGES_PER_ROUND} stageEstimates={stageEstimates} />
         )}
         {stages.length >= STAGES_PER_ROUND * 3 && (
-          <RoundSection roundNumber={3} stages={stages} stageResults={stageResults} enabledStages={enabledStages} onStageToggle={onStageToggle} currentStage={currentStage} stageProgressMap={stageProgressMap} startIndex={STAGES_PER_ROUND * 2} />
+          <RoundSection roundNumber={3} stages={stages} stageResults={stageResults} enabledStages={enabledStages} onStageToggle={onStageToggle} currentStage={currentStage} stageProgressMap={stageProgressMap} startIndex={STAGES_PER_ROUND * 2} stageEstimates={stageEstimates} />
         )}
       </div>
 

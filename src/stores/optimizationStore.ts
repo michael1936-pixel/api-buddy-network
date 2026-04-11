@@ -64,9 +64,18 @@ export interface OptimizationState {
   combinationsPerSecond: number;
   error: string | null;
   activeRunId: number | null;
+  bestTrainReturn: number | null;
+  bestTestReturn: number | null;
+  // Queue
+  symbolQueue: string[];
+  queueIndex: number;
+  queueResults: Record<string, 'pending' | 'running' | 'done' | 'failed'>;
+  // Stage estimates
+  stageEstimates: Record<number, number>;
 
   // Actions
   runOptimization: (symbol: string, queryClient: any) => Promise<void>;
+  runOptimizationQueue: (symbols: string[], queryClient: any) => Promise<void>;
   stopOptimization: () => void;
   toggleStage: (index: number, enabled: boolean) => void;
   resetState: () => void;
@@ -113,6 +122,12 @@ export const useOptimizationStore = create<OptimizationState>((set, get) => ({
   combinationsPerSecond: 0,
   error: null,
   activeRunId: null,
+  bestTrainReturn: null,
+  bestTestReturn: null,
+  symbolQueue: [],
+  queueIndex: 0,
+  queueResults: {},
+  stageEstimates: {},
 
   toggleStage: (index, enabled) => {
     set(state => {
@@ -133,6 +148,9 @@ export const useOptimizationStore = create<OptimizationState>((set, get) => ({
       combinationsPerSecond: 0,
       error: null,
       activeRunId: null,
+      bestTrainReturn: null,
+      bestTestReturn: null,
+      stageEstimates: {},
     });
     lastComboCount = 0;
     lastComboTime = 0;
@@ -265,6 +283,14 @@ export const useOptimizationStore = create<OptimizationState>((set, get) => ({
         (progress) => {
           set({ smartProgress: progress });
 
+          // Track best returns in real-time
+          const cur = get();
+          const newBestTrain = progress.bestReturn !== undefined && (cur.bestTrainReturn === null || progress.bestReturn > cur.bestTrainReturn) ? progress.bestReturn : cur.bestTrainReturn;
+          const newBestTest = progress.bestTestReturn !== undefined && (cur.bestTestReturn === null || progress.bestTestReturn > cur.bestTestReturn) ? progress.bestTestReturn : cur.bestTestReturn;
+          if (newBestTrain !== cur.bestTrainReturn || newBestTest !== cur.bestTestReturn) {
+            set({ bestTrainReturn: newBestTrain, bestTestReturn: newBestTest });
+          }
+
           // Update stage statuses
           set(state => {
             const next = [...state.stageStatuses];
@@ -371,6 +397,21 @@ export const useOptimizationStore = create<OptimizationState>((set, get) => ({
       if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
       if (progressPersistInterval) { clearInterval(progressPersistInterval); progressPersistInterval = null; }
     }
+  },
+
+  runOptimizationQueue: async (symbols, queryClient) => {
+    set({ symbolQueue: symbols, queueIndex: 0, queueResults: Object.fromEntries(symbols.map(s => [s, 'pending' as const])) });
+    for (let i = 0; i < symbols.length; i++) {
+      if (abortController?.signal.aborted) break;
+      set({ queueIndex: i, queueResults: { ...get().queueResults, [symbols[i]]: 'running' } });
+      try {
+        await get().runOptimization(symbols[i], queryClient);
+        set({ queueResults: { ...get().queueResults, [symbols[i]]: 'done' } });
+      } catch {
+        set({ queueResults: { ...get().queueResults, [symbols[i]]: 'failed' } });
+      }
+    }
+    set({ symbolQueue: [], queueIndex: 0 });
   },
 }));
 
