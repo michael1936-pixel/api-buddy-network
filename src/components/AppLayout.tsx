@@ -2,6 +2,7 @@ import { ReactNode, useState, useEffect, useMemo } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { cn } from "@/lib/utils";
 import { useMarketData } from "@/contexts/MarketDataContext";
+import { useOptimizationStore } from "@/stores/optimizationStore";
 
 const navItems = [
   { to: "/", label: "סקירה" },

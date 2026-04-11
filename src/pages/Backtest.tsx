@@ -5,10 +5,13 @@ import { toast } from "@/hooks/use-toast";
 import { SmartOptimizationProgressCard } from "@/components/backtest/OptimizationProgress";
 import SymbolSearch from "@/components/backtest/SymbolSearch";
 import { useOptimizationStore, allStages } from "@/stores/optimizationStore";
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+
+type ResultFilter = 'all' | 'approved' | 'rejected';
 
 export default function BacktestPage() {
-  const { data: optimizations = [] } = useOptimizationResults();
+  const [filter, setFilter] = useState<ResultFilter>('all');
+  const { data: optimizations = [] } = useOptimizationResults(filter);
   const { data: tracked = [] } = useTrackedSymbols();
   const queryClient = useQueryClient();
   const lastToastRef = useRef<string>('');
@@ -17,8 +20,11 @@ export default function BacktestPage() {
     isRunning, currentSymbol, enabledStages, stageStatuses, stageResults,
     smartProgress, stageProgressMap, overallCombinations, elapsedTime,
     combinationsPerSecond, error,
-    runOptimization, stopOptimization, toggleStage,
+    runOptimization, stopOptimization, toggleStage, rehydrate,
   } = useOptimizationStore();
+
+  // Rehydrate on mount
+  useEffect(() => { rehydrate(); }, []);
 
   // Show error toast
   useEffect(() => {
@@ -103,11 +109,26 @@ export default function BacktestPage() {
         </div>
       )}
 
-      {optimizations.length > 0 ? (
-        <div className="surface-card">
-          <div className="surface-card-head">
-            <span className="text-sm font-semibold">תוצאות ({optimizations.length})</span>
+      {/* Results with filter tabs */}
+      <div className="surface-card">
+        <div className="surface-card-head flex items-center justify-between">
+          <span className="text-sm font-semibold">תוצאות ({optimizations.length})</span>
+          <div className="flex gap-1">
+            {([['all', 'הכל'], ['approved', '✅ מאושרות'], ['rejected', '❌ נדחו']] as const).map(([key, label]) => (
+              <button
+                key={key}
+                onClick={() => setFilter(key)}
+                className={cn(
+                  "text-[10px] px-2 py-0.5 rounded transition-colors",
+                  filter === key ? "bg-primary/20 text-primary font-semibold" : "text-muted-foreground hover:text-foreground"
+                )}
+              >
+                {label}
+              </button>
+            ))}
           </div>
+        </div>
+        {optimizations.length > 0 ? (
           <div className="max-h-[400px] overflow-y-auto">
             <div className="row-item text-[10px] text-muted-foreground font-semibold sticky top-0 z-10" style={{ background: 'hsl(var(--surface))' }}>
               <span className="w-[60px]">סימול</span>
@@ -145,12 +166,12 @@ export default function BacktestPage() {
                 );
               })}
           </div>
-        </div>
-      ) : (
-        <div className="text-center text-sm text-muted-foreground py-10">
-          אין תוצאות אופטימיזציה — בחר מניה להתחלה
-        </div>
-      )}
+        ) : (
+          <div className="text-center text-sm text-muted-foreground py-10">
+            אין תוצאות אופטימיזציה — בחר מניה להתחלה
+          </div>
+        )}
+      </div>
     </div>
   );
 }
