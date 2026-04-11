@@ -5,8 +5,11 @@ import { supabase } from "@/integrations/supabase/client";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "@/hooks/use-toast";
 import OptimizationProgress, { OptimizationStatus } from "@/components/backtest/OptimizationProgress";
+import SymbolSearch from "@/components/backtest/SymbolSearch";
 import { runSmartOptimization } from "@/lib/optimizer/smartOptimizer";
 import { NNE_PRESET_CONFIG } from "@/lib/optimizer/presetConfigs";
+import { TrainTestSplitAgent } from "@/lib/optimizer/trainTestSplitAgent";
+import { TestThresholdAgent } from "@/lib/optimizer/testThresholdAgent";
 import type { SymbolData, Candle, PeriodSplit } from "@/lib/optimizer/types";
 
 export default function BacktestPage() {
@@ -20,19 +23,54 @@ export default function BacktestPage() {
     currentStage: 0, totalStages: 0, percent: 0,
   });
 
-  const handleSymbolClick = useCallback(async (symbol: string) => {
+  const runOptimization = useCallback(async (symbol: string) => {
     if (optStatus.isRunning) return;
 
     const controller = new AbortController();
     abortRef.current = controller;
 
     setOptStatus({
-      isRunning: true, symbol, stageName: 'טוען נתונים...', stageDescription: `טוען נתוני ${symbol} מהDB`,
+      isRunning: true, symbol, stageName: 'בודק נתונים...', stageDescription: `בודק כמות נתונים עבור ${symbol}`,
       currentStage: 0, totalStages: 21, percent: 0,
     });
 
     try {
-      // 1. Fetch market data for symbol
+      // 1. Check how many bars we have
+      const { count } = await supabase
+        .from('market_data')
+        .select('*', { count: 'exact', head: true })
+        .eq('symbol', symbol);
+
+      const barCount = count || 0;
+
+      // 2. If not enough bars, download from Twelve Data
+      if (barCount < 200) {
+        setOptStatus(prev => ({
+          ...prev, stageName: 'מוריד נתונים...', stageDescription: `מוריד נתוני ${symbol} מ-Twelve Data (5 שנים)`,
+          percent: 2,
+        }));
+
+        const { data: dlResult, error: dlError } = await supabase.functions.invoke('download-historical-data', {
+          body: { symbol },
+        });
+
+        if (dlError) throw new Error(`שגיאה בהורדת נתונים: ${dlError.message}`);
+        if (!dlResult?.bars_downloaded || dlResult.bars_downloaded < 200) {
+          throw new Error(`לא הצלחתי להוריד מספיק נתונים: ${dlResult?.bars_downloaded || 0} bars`);
+        }
+
+        // Refresh tracked symbols
+        queryClient.invalidateQueries({ queryKey: ['tracked_symbols'] });
+
+        toast({ title: `📊 ${symbol}`, description: `הורדו ${dlResult.bars_downloaded.toLocaleString()} bars` });
+      }
+
+      // 3. Load data from DB
+      setOptStatus(prev => ({
+        ...prev, stageName: 'טוען נתונים...', stageDescription: `טוען נתוני ${symbol} מה-DB`,
+        percent: 5,
+      }));
+
       const { data: marketData, error } = await supabase
         .from('market_data')
         .select('*')
@@ -44,21 +82,34 @@ export default function BacktestPage() {
         throw new Error(`לא מספיק נתונים ל-${symbol}: ${marketData?.length || 0} bars (צריך לפחות 200)`);
       }
 
-      // 2. Convert to Candle format
+      // 4. Convert to Candle format
       const candles: Candle[] = marketData.map(bar => ({
         timestamp: new Date(bar.timestamp).getTime(),
         open: bar.open, high: bar.high, low: bar.low, close: bar.close,
         volume: bar.volume || 0,
       }));
 
-      // 3. Auto split 70/30
-      const splitIdx = Math.floor(candles.length * 0.7);
+      // 5. Load TrainTestSplitAgent for dynamic split
+      setOptStatus(prev => ({
+        ...prev, stageName: 'טוען סוכנים...', stageDescription: 'טוען סוכן Train/Test Split',
+        percent: 8,
+      }));
+
+      const splitAgent = new TrainTestSplitAgent();
+      await splitAgent.load();
+      const trainPercent = splitAgent.getRecommendedSplit('15min');
+      const splitRec = splitAgent.getRecommendation();
+
+      console.log(`[Backtest] Using train/test split: ${trainPercent}/${100 - trainPercent} (confidence: ${splitRec.confidence}%)`);
+
+      // 6. Build period split
+      const splitIdx = Math.floor(candles.length * (trainPercent / 100));
       const periodSplit: PeriodSplit = {
         trainStartDate: new Date(candles[0].timestamp),
         trainEndDate: new Date(candles[splitIdx - 1].timestamp),
         testStartDate: new Date(candles[splitIdx].timestamp),
         testEndDate: new Date(candles[candles.length - 1].timestamp),
-        trainPercent: 70,
+        trainPercent,
       };
 
       const symbolData: SymbolData[] = [{
@@ -68,7 +119,7 @@ export default function BacktestPage() {
         endDate: new Date(candles[candles.length - 1].timestamp),
       }];
 
-      // 4. Run smart optimization
+      // 7. Run smart optimization
       const result = await runSmartOptimization(
         symbolData, NNE_PRESET_CONFIG, periodSplit, 'single', {},
         (progress) => {
@@ -78,7 +129,7 @@ export default function BacktestPage() {
             stageDescription: progress.stageDescription,
             currentStage: progress.currentStage,
             totalStages: progress.totalStages,
-            percent: Math.round((progress.currentStage / progress.totalStages) * 100),
+            percent: Math.round(10 + (progress.currentStage / progress.totalStages) * 85),
             bestTrainReturn: progress.bestTrainReturn,
             bestTestReturn: progress.bestTestReturn,
           }));
@@ -92,35 +143,57 @@ export default function BacktestPage() {
         return;
       }
 
-      // 5. Save results to DB
+      // 8. Evaluate with TestThresholdAgent
       const best = result.finalResult.bestForProfit;
       if (best) {
         const trainReturn = best.totalTrainReturn;
         const testReturn = best.totalTestReturn;
-        const overfit = trainReturn > 0 ? Math.abs(trainReturn - testReturn) / trainReturn : 0;
-        const overfitRisk = overfit < 0.3 ? 'low' : overfit < 0.6 ? 'medium' : 'high';
-        const isActive = testReturn > 0 && overfitRisk !== 'high';
-
         const trainResult = best.trainResults[0]?.result;
         const testResult = best.testResults[0]?.result;
+        const winRate = testResult?.winRate || trainResult?.winRate || 0;
+        const maxDrawdown = testResult?.maxDrawdown || trainResult?.maxDrawdown || 0;
+        const sharpeRatio = testResult?.sharpeRatio || trainResult?.sharpeRatio || 0;
+        const totalTrades = (trainResult?.totalTrades || 0) + (testResult?.totalTrades || 0);
 
+        setOptStatus(prev => ({
+          ...prev, stageName: 'מעריך תוצאות...', stageDescription: 'סוכן Test Threshold מעריך',
+          percent: 97,
+        }));
+
+        const thresholdAgent = new TestThresholdAgent();
+        await thresholdAgent.load();
+        const evaluation = thresholdAgent.evaluate({
+          trainReturn, testReturn, winRate, maxDrawdown, sharpeRatio, totalTrades,
+        });
+
+        console.log(`[Backtest] Evaluation: score=${evaluation.score}, passed=${evaluation.passed}`, evaluation.reasons);
+
+        const overfit = trainReturn > 0 ? Math.abs(trainReturn - testReturn) / trainReturn : 0;
+        const overfitRisk = overfit < 0.3 ? 'low' : overfit < 0.6 ? 'medium' : 'high';
+
+        // 9. Save results to DB
         await supabase.from('optimization_results').insert({
           symbol,
           parameters: best.parameters as any,
           train_return: trainReturn,
           test_return: testReturn,
-          is_active: isActive,
+          is_active: evaluation.passed,
           overfit_risk: overfitRisk,
-          win_rate: testResult?.winRate || trainResult?.winRate || 0,
-          max_drawdown: testResult?.maxDrawdown || trainResult?.maxDrawdown || 0,
-          sharpe_ratio: testResult?.sharpeRatio || trainResult?.sharpeRatio || 0,
-          total_trades: (trainResult?.totalTrades || 0) + (testResult?.totalTrades || 0),
-          agent_decision: isActive ? 'approved' : 'rejected',
-          agent_confidence: Math.max(0, Math.min(100, (1 - overfit) * 100)),
+          win_rate: winRate,
+          max_drawdown: maxDrawdown,
+          sharpe_ratio: sharpeRatio,
+          total_trades: totalTrades,
+          agent_decision: evaluation.passed ? 'approved' : 'rejected',
+          agent_confidence: evaluation.score,
         });
 
         queryClient.invalidateQueries({ queryKey: ['optimization_results'] });
-        toast({ title: `✅ ${symbol} — אופטימיזציה הושלמה`, description: `אימון: ${trainReturn.toFixed(1)}% | מבחן: ${testReturn.toFixed(1)}%` });
+
+        const emoji = evaluation.passed ? '✅' : '❌';
+        toast({
+          title: `${emoji} ${symbol} — ציון ${evaluation.score.toFixed(0)}/100`,
+          description: `Train: ${trainReturn.toFixed(1)}% | Test: ${testReturn.toFixed(1)}% | Split: ${trainPercent}/${100 - trainPercent}${evaluation.reasons.length > 0 ? '\n' + evaluation.reasons[0] : ''}`,
+        });
       }
 
       setOptStatus(prev => ({ ...prev, isRunning: false, completed: true }));
@@ -145,13 +218,16 @@ export default function BacktestPage() {
 
   return (
     <div className="space-y-4">
+      {/* Search bar */}
+      <SymbolSearch onSelect={runOptimization} disabled={optStatus.isRunning} />
+
       <div className="flex justify-between items-center">
         <span className="text-base font-semibold">S&P 500 — {tracked.length || "~420"} מניות</span>
         <span className="text-[11px] text-muted-foreground">✅ {tracked.filter((s: any) => s.is_active).length} פעילות | 🔬 {optimizations.length} נסרקו</span>
       </div>
 
       <div className="text-[10px] text-muted-foreground">
-        💡 לחץ על מניה כדי להריץ אופטימיזציה אוטומטית | <span className="text-trading-profit">✅ פעיל</span> · <span className="text-trading-loss">❌ נכשל</span> · ⬜ ממתין
+        💡 חפש מניה למעלה או לחץ בגריד להרצת אופטימיזציה אוטומטית | <span className="text-trading-profit">✅ עבר</span> · <span className="text-trading-loss">❌ נכשל</span> · ⬜ ממתין
       </div>
 
       {tracked.length > 0 && (
@@ -167,7 +243,7 @@ export default function BacktestPage() {
             return (
               <div
                 key={s.symbol}
-                onClick={() => handleSymbolClick(s.symbol)}
+                onClick={() => runOptimization(s.symbol)}
                 className={cn(
                   "rounded-lg p-1.5 text-center cursor-pointer transition-all text-xs hover:scale-105",
                   isOptimizing && "animate-pulse ring-2 ring-primary"
@@ -198,6 +274,7 @@ export default function BacktestPage() {
               <span className="w-[65px]">מבחן</span>
               <span className="w-[45px]">WR</span>
               <span className="w-[50px]">DD</span>
+              <span className="w-[50px]">ציון</span>
               <span className="flex-1 text-left">סטטוס</span>
             </div>
             {optimizations
@@ -215,8 +292,9 @@ export default function BacktestPage() {
                     </span>
                     <span className="font-mono w-[45px]">{o.win_rate || 0}%</span>
                     <span className="font-mono text-trading-loss w-[50px]">{(o.max_drawdown || 0).toFixed(1)}%</span>
+                    <span className="font-mono w-[50px]">{(o.agent_confidence || 0).toFixed(0)}</span>
                     <span className="badge-pill" style={{ background: rc + "18", color: rc }}>
-                      {o.is_active ? "✅ פעיל" : "❌ לא פעיל"}
+                      {o.is_active ? "✅ עבר" : "❌ נכשל"}
                     </span>
                   </div>
                 );
@@ -228,7 +306,7 @@ export default function BacktestPage() {
           <div className="empty-state">
             <div className="empty-state-icon">🔬</div>
             <div className="empty-state-text">אין תוצאות אופטימיזציה עדיין</div>
-            <div className="empty-state-sub">לחץ על מניה כדי להריץ אופטימיזציה</div>
+            <div className="empty-state-sub">חפש מניה למעלה או לחץ על מניה בגריד</div>
           </div>
         </div>
       )}
