@@ -241,7 +241,7 @@ export const SmartOptimizationProgressCard: React.FC<SmartOptimizationProgressPr
   stages, currentStage, totalStages, progress, stageResults,
   onSkipStage, onStop, elapsedTime, isRunning, enabledStages, onStageToggle,
   stageProgress: stageProgressMap, preRunMode = false, overallCombinations, 
-  combinationsPerSecond, symbol
+  combinationsPerSecond, symbol, bestTrainReturn, bestTestReturn, stageEstimates
 }) => {
   const overallProgress = useMemo(() => {
     const enabledCount = enabledStages.filter(Boolean).length;
