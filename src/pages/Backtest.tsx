@@ -12,6 +12,53 @@ import { TrainTestSplitAgent } from "@/lib/optimizer/trainTestSplitAgent";
 import { TestThresholdAgent } from "@/lib/optimizer/testThresholdAgent";
 import type { SymbolData, Candle, PeriodSplit } from "@/lib/optimizer/types";
 
+const HISTORY_TARGET_YEARS = 5;
+const HISTORY_TARGET_BARS = 35000;
+const MARKET_DATA_INTERVAL = "15min";
+const MARKET_DATA_PAGE_SIZE = 1000;
+
+interface MarketDataSummary {
+  barCount: number;
+  oldestTimestamp: string | null;
+}
+
+function getHistoryTargetDate(): Date {
+  const targetDate = new Date();
+  targetDate.setFullYear(targetDate.getFullYear() - HISTORY_TARGET_YEARS);
+  return targetDate;
+}
+
+async function getMarketDataSummary(symbol: string): Promise<MarketDataSummary> {
+  const [{ count, error: countError }, { data: oldestRows, error: oldestError }] = await Promise.all([
+    supabase
+      .from('market_data')
+      .select('id', { count: 'exact', head: true })
+      .eq('symbol', symbol)
+      .eq('interval', MARKET_DATA_INTERVAL),
+    supabase
+      .from('market_data')
+      .select('timestamp')
+      .eq('symbol', symbol)
+      .eq('interval', MARKET_DATA_INTERVAL)
+      .order('timestamp', { ascending: true })
+      .limit(1),
+  ]);
+
+  if (countError) throw new Error(`שגיאה בבדיקת כמות נתונים: ${countError.message}`);
+  if (oldestError) throw new Error(`שגיאה בבדיקת ההיסטוריה: ${oldestError.message}`);
+
+  return {
+    barCount: count || 0,
+    oldestTimestamp: oldestRows?.[0]?.timestamp ?? null,
+  };
+}
+
+function needsHistoricalTopUp(summary: MarketDataSummary): boolean {
+  if (summary.barCount < HISTORY_TARGET_BARS) return true;
+  if (!summary.oldestTimestamp) return true;
+  return new Date(summary.oldestTimestamp) > getHistoryTargetDate();
+}
+
 export default function BacktestPage() {
   const { data: optimizations = [] } = useOptimizationResults();
   const { data: tracked = [] } = useTrackedSymbols();
@@ -21,6 +68,8 @@ export default function BacktestPage() {
   const [optStatus, setOptStatus] = useState<OptimizationStatus>({
     isRunning: false, symbol: '', stageName: '', stageDescription: '',
     currentStage: 0, totalStages: 0, percent: 0,
+    barsLoaded: 0, targetBars: HISTORY_TARGET_BARS,
+    combosCompleted: 0, combosTotal: 0,
   });
 
   const runOptimization = useCallback(async (symbol: string) => {
@@ -32,70 +81,82 @@ export default function BacktestPage() {
     setOptStatus({
       isRunning: true, symbol, stageName: 'בודק נתונים...', stageDescription: `בודק כמות נתונים עבור ${symbol}`,
       currentStage: 0, totalStages: 21, percent: 0,
+      barsLoaded: 0, targetBars: HISTORY_TARGET_BARS,
+      combosCompleted: 0, combosTotal: 0,
     });
 
     try {
-      // 1. Check how many bars we have
-      const { count } = await supabase
-        .from('market_data')
-        .select('*', { count: 'exact', head: true })
-        .eq('symbol', symbol);
+      const summary = await getMarketDataSummary(symbol);
 
-      const barCount = count || 0;
+      setOptStatus((prev) => ({
+        ...prev,
+        barsLoaded: summary.barCount,
+        targetBars: HISTORY_TARGET_BARS,
+        stageDescription: `נמצאו ${summary.barCount.toLocaleString()} bars עבור ${symbol}`,
+      }));
 
-      // 2. If not enough bars, download from Twelve Data
-      if (barCount < 200) {
+      if (needsHistoricalTopUp(summary)) {
         setOptStatus(prev => ({
-          ...prev, stageName: 'מוריד נתונים...', stageDescription: `מוריד נתוני ${symbol} מ-Twelve Data (5 שנים)`,
+          ...prev,
+          stageName: 'מסנכרן היסטוריה...',
+          stageDescription: `משלים ${symbol} עד ~${HISTORY_TARGET_BARS.toLocaleString()} bars / ${HISTORY_TARGET_YEARS} שנים`,
           percent: 2,
         }));
 
         const { data: dlResult, error: dlError } = await supabase.functions.invoke('download-historical-data', {
-          body: { symbol },
+          body: { symbol, target_years: HISTORY_TARGET_YEARS, target_bars: HISTORY_TARGET_BARS },
         });
 
         if (dlError) throw new Error(`שגיאה בהורדת נתונים: ${dlError.message}`);
-        if (!dlResult?.bars_downloaded || dlResult.bars_downloaded < 200) {
-          throw new Error(`לא הצלחתי להוריד מספיק נתונים: ${dlResult?.bars_downloaded || 0} bars`);
+
+        const syncedBars = dlResult?.total_bars ?? dlResult?.bars_downloaded ?? summary.barCount;
+        if (syncedBars < 200) {
+          throw new Error(`לא הצלחתי להוריד מספיק נתונים: ${syncedBars || 0} bars`);
         }
 
-        // Refresh tracked symbols
         queryClient.invalidateQueries({ queryKey: ['tracked_symbols'] });
 
-        toast({ title: `📊 ${symbol}`, description: `הורדו ${dlResult.bars_downloaded.toLocaleString()} bars` });
+        toast({
+          title: `📊 ${symbol}`,
+          description: `יש כעת ${syncedBars.toLocaleString()} bars (${(dlResult?.bars_added || 0).toLocaleString()} חדשים)`,
+        });
       }
 
-      // 3. Load data from DB
       setOptStatus(prev => ({
         ...prev, stageName: 'טוען נתונים...', stageDescription: `טוען נתוני ${symbol} מה-DB`,
         percent: 5,
       }));
 
-      // Paginated fetch — get ALL bars (Supabase default limit is 1000)
       let allBars: any[] = [];
-      const PAGE_SIZE = 1000;
       let offset = 0;
-      let keepFetching = true;
 
-      while (keepFetching) {
+      while (true) {
+        if (controller.signal.aborted) {
+          throw new DOMException('Optimization aborted', 'AbortError');
+        }
+
         const { data: page, error: pageErr } = await supabase
           .from('market_data')
-          .select('*')
+          .select('timestamp, open, high, low, close, volume')
           .eq('symbol', symbol)
+          .eq('interval', MARKET_DATA_INTERVAL)
           .order('timestamp', { ascending: true })
-          .range(offset, offset + PAGE_SIZE - 1);
+          .range(offset, offset + MARKET_DATA_PAGE_SIZE - 1);
 
         if (pageErr) throw new Error(`שגיאה בטעינת נתונים: ${pageErr.message}`);
-        if (!page || page.length === 0) { keepFetching = false; break; }
+        if (!page || page.length === 0) break;
 
-        allBars = allBars.concat(page);
-        offset += PAGE_SIZE;
+        allBars.push(...page);
+        offset += page.length;
 
         setOptStatus(prev => ({
-          ...prev, stageDescription: `טוען נתוני ${symbol}... ${allBars.length.toLocaleString()} bars`,
+          ...prev,
+          barsLoaded: allBars.length,
+          targetBars: HISTORY_TARGET_BARS,
+          stageDescription: `טוען נתוני ${symbol}... ${allBars.length.toLocaleString()} / ~${HISTORY_TARGET_BARS.toLocaleString()} bars`,
         }));
 
-        if (page.length < PAGE_SIZE) keepFetching = false;
+        if (page.length < MARKET_DATA_PAGE_SIZE) break;
       }
 
       const marketData = allBars;
@@ -126,7 +187,7 @@ export default function BacktestPage() {
       console.log(`[Backtest] Using train/test split: ${trainPercent}/${100 - trainPercent} (confidence: ${splitRec.confidence}%)`);
 
       // 6. Build period split
-      const splitIdx = Math.floor(candles.length * (trainPercent / 100));
+      const splitIdx = Math.min(candles.length - 1, Math.max(1, Math.floor(candles.length * (trainPercent / 100))));
       const periodSplit: PeriodSplit = {
         trainStartDate: new Date(candles[0].timestamp),
         trainEndDate: new Date(candles[splitIdx - 1].timestamp),
@@ -146,15 +207,23 @@ export default function BacktestPage() {
       const result = await runSmartOptimization(
         symbolData, NNE_PRESET_CONFIG, periodSplit, 'single', {},
         (progress) => {
+          const stageFraction = progress.totalStages > 0
+            ? ((progress.currentStage - 1) + (progress.total > 0 ? progress.current / progress.total : 0)) / progress.totalStages
+            : 0;
+
           setOptStatus(prev => ({
             ...prev,
             stageName: progress.stageName,
             stageDescription: progress.stageDescription,
             currentStage: progress.currentStage,
             totalStages: progress.totalStages,
-            percent: Math.round(10 + (progress.currentStage / progress.totalStages) * 85),
+            percent: Math.round(10 + stageFraction * 85),
             bestTrainReturn: progress.bestTrainReturn,
             bestTestReturn: progress.bestTestReturn,
+            barsLoaded: candles.length,
+            targetBars: HISTORY_TARGET_BARS,
+            combosCompleted: progress.current,
+            combosTotal: progress.total,
           }));
         },
         controller.signal,
@@ -236,7 +305,19 @@ export default function BacktestPage() {
   };
 
   const handleClose = () => {
-    setOptStatus({ isRunning: false, symbol: '', stageName: '', stageDescription: '', currentStage: 0, totalStages: 0, percent: 0 });
+    setOptStatus({
+      isRunning: false,
+      symbol: '',
+      stageName: '',
+      stageDescription: '',
+      currentStage: 0,
+      totalStages: 0,
+      percent: 0,
+      barsLoaded: 0,
+      targetBars: HISTORY_TARGET_BARS,
+      combosCompleted: 0,
+      combosTotal: 0,
+    });
   };
 
   return (

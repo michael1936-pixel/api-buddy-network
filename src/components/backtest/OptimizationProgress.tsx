@@ -10,6 +10,10 @@ export interface OptimizationStatus {
   currentStage: number;
   totalStages: number;
   percent: number;
+  barsLoaded?: number;
+  targetBars?: number;
+  combosCompleted?: number;
+  combosTotal?: number;
   bestTrainReturn?: number;
   bestTestReturn?: number;
   error?: string;
@@ -46,6 +50,26 @@ export default function OptimizationProgress({ status, onCancel, onClose }: Prop
               <span>{status.percent}%</span>
             </div>
             <Progress value={status.percent} className="h-2" />
+
+            {(status.barsLoaded !== undefined || status.combosTotal) && (
+              <div className="space-y-1 text-xs text-muted-foreground">
+                {status.barsLoaded !== undefined && (
+                  <div className="flex justify-between">
+                    <span>Bars</span>
+                    <span>
+                      {status.barsLoaded.toLocaleString()}
+                      {status.targetBars ? ` / ~${status.targetBars.toLocaleString()}` : ''}
+                    </span>
+                  </div>
+                )}
+                {!!status.combosTotal && (
+                  <div className="flex justify-between">
+                    <span>קומבינציות</span>
+                    <span>{(status.combosCompleted || 0).toLocaleString()} / {status.combosTotal.toLocaleString()}</span>
+                  </div>
+                )}
+              </div>
+            )}
 
             {(status.bestTrainReturn !== undefined) && (
               <div className="grid grid-cols-2 gap-2 text-xs">

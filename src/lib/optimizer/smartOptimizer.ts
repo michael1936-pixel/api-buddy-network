@@ -3,18 +3,17 @@ import {
   PeriodSplit,
   ExtendedStocksOptimizationConfig,
   ExtendedStocksStrategyParameters,
-  PortfolioOptimizationResult,
   MultiObjectiveResult,
   ObjectiveType,
   ParameterRange
 } from './types';
-import { optimizePortfolioWithWorker, OptimizationProgressInfo } from './portfolioOptimizer';
-import { 
-  createEmptyMultiObjectiveResult, 
-  updateMultiObjectiveResult,
-} from './multiObjectiveMetrics';
-
-const ENABLE_OPTIMIZATION_LOGS = false;
+import {
+  optimizePortfolioWithWorker,
+  OptimizationProgressInfo,
+  DEFAULT_EXTENDED_STOCKS_PARAMETERS,
+  estimateCombinationCountForConfig,
+} from './portfolioOptimizer';
+import { createEmptyMultiObjectiveResult, updateMultiObjectiveResult } from './multiObjectiveMetrics';
 
 export interface OptimizationStage {
   name: string;
@@ -132,6 +131,42 @@ function generateOptimizationStages(): OptimizationStage[] {
 
 const OPTIMIZATION_STAGES: OptimizationStage[] = generateOptimizationStages();
 
+function isParameterRange(value: unknown): value is ParameterRange {
+  return !!value && typeof value === 'object' && 'min' in value && 'max' in value && 'step' in value;
+}
+
+function clampToRange(value: number, range: ParameterRange): number {
+  return Math.min(range.max, Math.max(range.min, Math.round(value * 1000) / 1000));
+}
+
+function getAnchorParameterValue(
+  param: keyof ExtendedStocksStrategyParameters,
+  range: ParameterRange,
+  bestParams: Partial<ExtendedStocksStrategyParameters>
+): number {
+  const bestValue = bestParams[param];
+  if (typeof bestValue === 'number') {
+    return clampToRange(bestValue, range);
+  }
+
+  const defaultValue = DEFAULT_EXTENDED_STOCKS_PARAMETERS[param];
+  if (typeof defaultValue === 'number') {
+    return clampToRange(defaultValue, range);
+  }
+
+  return clampToRange(range.min, range);
+}
+
+function createFocusedRange(anchor: number, range: ParameterRange, radiusInSteps: number): ParameterRange {
+  const min = Math.max(range.min, anchor - radiusInSteps * range.step);
+  const max = Math.min(range.max, anchor + radiusInSteps * range.step);
+  return {
+    min: clampToRange(min, range),
+    max: clampToRange(max, range),
+    step: range.step,
+  };
+}
+
 function createStageConfig(
   baseConfig: ExtendedStocksOptimizationConfig,
   stage: OptimizationStage,
@@ -140,39 +175,43 @@ function createStageConfig(
   stepMultiplier: number = 1,
   round2Range: number = 1
 ): ExtendedStocksOptimizationConfig {
-  const stageConfig = { ...baseConfig };
+  const stageConfig = { ...baseConfig } as ExtendedStocksOptimizationConfig;
+  const activeStageParameters = new Set(stage.parameters);
 
-  Object.keys(bestParams).forEach(key => {
-    const value = bestParams[key as keyof ExtendedStocksStrategyParameters];
-    if (typeof value === 'number') {
-      (stageConfig as any)[key] = { min: value, max: value, step: 1 };
-    }
+  Object.entries(baseConfig).forEach(([key, value]) => {
+    if (!isParameterRange(value)) return;
+
+    const fixedValue = getAnchorParameterValue(
+      key as keyof ExtendedStocksStrategyParameters,
+      value,
+      bestParams,
+    );
+
+    (stageConfig as any)[key] = {
+      min: fixedValue,
+      max: fixedValue,
+      step: value.step,
+    };
   });
 
   stage.parameters.forEach(param => {
     const originalRange = baseConfig[param as keyof ExtendedStocksOptimizationConfig];
-    if (typeof originalRange === 'object' && originalRange !== null && 'min' in originalRange) {
-      const range = originalRange as ParameterRange;
-      
-      if (round === 1) {
-        const effectiveStep = stepMultiplier > 1 ? range.step * stepMultiplier : range.step;
-        (stageConfig as any)[param] = { min: range.min, max: range.max, step: effectiveStep };
-      } else if (round === 2) {
-        const bestValue = bestParams[param as keyof ExtendedStocksStrategyParameters] as number || range.min;
-        const stepsRange = round2Range * range.step;
-        (stageConfig as any)[param] = {
-          min: Math.max(range.min, bestValue - stepsRange),
-          max: Math.min(range.max, bestValue + stepsRange),
-          step: range.step
-        };
-      } else if (round === 3) {
-        const bestValue = bestParams[param as keyof ExtendedStocksStrategyParameters] as number || range.min;
-        (stageConfig as any)[param] = {
-          min: Math.max(range.min, bestValue - range.step),
-          max: Math.min(range.max, bestValue + range.step),
-          step: range.step
-        };
-      }
+    if (!activeStageParameters.has(param) || !isParameterRange(originalRange)) return;
+
+    const range = originalRange as ParameterRange;
+    const anchorValue = getAnchorParameterValue(
+      param as keyof ExtendedStocksStrategyParameters,
+      range,
+      bestParams,
+    );
+
+    if (round === 1) {
+      const effectiveStep = stepMultiplier > 1 ? range.step * stepMultiplier : range.step;
+      (stageConfig as any)[param] = { min: range.min, max: range.max, step: effectiveStep };
+    } else if (round === 2) {
+      (stageConfig as any)[param] = createFocusedRange(anchorValue, range, round2Range);
+    } else if (round === 3) {
+      (stageConfig as any)[param] = createFocusedRange(anchorValue, range, 1);
     }
   });
 
@@ -214,10 +253,11 @@ export async function runSmartOptimization(
   let globalBestTrainReturn = savedState?.globalBestTrainReturn || -Infinity;
   let globalBestTestReturn = savedState?.globalBestTestReturn || -Infinity;
   let globalMultiObjectiveResult = createEmptyMultiObjectiveResult(objective);
-  const globalCombinationCache = new Set<string>();
+  let completedCombinations = savedState?.completedCombinations || 0;
+  let totalCombinations = savedState?.totalCombinations || 0;
 
-  let stageStatuses: StageStatus[] = savedState?.stageStatuses || dynamicStages.map((stage, idx) => ({
-    stageNumber: idx + 1,
+  let stageStatuses: StageStatus[] = savedState?.stageStatuses || dynamicStages.map((stage) => ({
+    stageNumber: stage.stageNumber,
     stageName: stage.name,
     status: 'pending' as const
   }));
@@ -250,11 +290,23 @@ export async function runSmartOptimization(
     stageStatuses[stageIndex].startTime = stageStartTime;
 
     const stageConfig = createStageConfig(config, stage, bestParametersSoFar, stage.round, stepMultiplier, round2Range);
+    const stageCombinationCount = estimateCombinationCountForConfig(stageConfig);
+    let latestStageProgress: OptimizationProgressInfo = {
+      current: 0,
+      total: stageCombinationCount,
+      percent: 0,
+      bestTrainReturn: Number.isFinite(globalBestTrainReturn) ? globalBestTrainReturn : undefined,
+      bestTestReturn: Number.isFinite(globalBestTestReturn) ? globalBestTestReturn : undefined,
+    };
+
+    totalCombinations = Math.max(totalCombinations, completedCombinations + stageCombinationCount);
 
     try {
       const stageResult = await optimizePortfolioWithWorker(
         symbolsData, stageConfig, periodSplit, mode, simulationConfig,
         (info) => {
+          latestStageProgress = info;
+
           if (onProgress) {
             onProgress({
               ...info,
@@ -288,6 +340,8 @@ export async function runSmartOptimization(
         globalMultiObjectiveResult = updateMultiObjectiveResult(globalMultiObjectiveResult, bestResult);
 
         const stageElapsed = (Date.now() - stageStartTime) / 1000;
+        completedCombinations += latestStageProgress.total;
+        totalCombinations = Math.max(totalCombinations, completedCombinations);
 
         stageResults.push({
           stageNumber: stageIndex + 1,
@@ -296,7 +350,7 @@ export async function runSmartOptimization(
           bestReturn: bestResult.totalTrainReturn,
           bestTestReturn: bestResult.totalTestReturn,
           elapsedTime: stageElapsed,
-          combinationsCount: globalCombinationCache.size,
+          combinationsCount: latestStageProgress.total,
           trainResults: bestResult.trainResults,
           testResults: bestResult.testResults
         });
@@ -311,8 +365,8 @@ export async function runSmartOptimization(
             totalStages: dynamicStages.length,
             bestParametersSoFar, stageResults,
             globalBestTrainReturn, globalBestTestReturn,
-            completedCombinations: globalCombinationCache.size,
-            totalCombinations: globalCombinationCache.size,
+            completedCombinations,
+            totalCombinations,
             stageStatuses, skippedStages, timeSavedBySkips
           });
         }
@@ -352,16 +406,8 @@ export function estimateTotalCombinations(
   });
 
   stages.forEach(stage => {
-    let stageCombinations = 1;
-    stage.parameters.forEach(param => {
-      const range = config[param as keyof ExtendedStocksOptimizationConfig];
-      if (typeof range === 'object' && range !== null && 'min' in range) {
-        const r = range as ParameterRange;
-        const count = Math.floor((r.max - r.min) / r.step) + 1;
-        stageCombinations *= Math.max(1, count);
-      }
-    });
-    total += stageCombinations;
+    const stageConfig = createStageConfig(config, stage, {}, stage.round);
+    total += estimateCombinationCountForConfig(stageConfig);
   });
 
   return total;
