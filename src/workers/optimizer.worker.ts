@@ -209,15 +209,25 @@ self.onmessage = (e: MessageEvent) => {
 
         const result = runCachedPortfolioBacktest(params);
 
+        // Strip heavy data (trades, monthly) to reduce postMessage serialization
+        const slimTrainResults = result.trainResults.map(r => ({
+          symbol: r.symbol, capitalAllocated: r.capitalAllocated, contributionToTotal: r.contributionToTotal,
+          result: { ...r.result, trades: [] },
+        }));
+        const slimTestResults = result.testResults.map(r => ({
+          symbol: r.symbol, capitalAllocated: r.capitalAllocated, contributionToTotal: r.contributionToTotal,
+          result: { ...r.result, trades: [] },
+        }));
+
         const portfolioResult = {
           mode: prefilteredSymbols.length === 1 ? 'single' : 'portfolio',
-          trainResults: result.trainResults,
-          testResults: result.testResults,
+          trainResults: slimTrainResults,
+          testResults: slimTestResults,
           totalTrainReturn: result.totalTrainReturn,
           totalTestReturn: result.totalTestReturn,
           overfit: result.totalTrainReturn > 0 ? Math.abs(result.totalTrainReturn - result.totalTestReturn) / result.totalTrainReturn : 0,
           parameters: params,
-          monthlyPerformance: result.monthlyPerformance,
+          monthlyPerformance: [],
           initialCapital: INITIAL_CAPITAL,
         };
 
