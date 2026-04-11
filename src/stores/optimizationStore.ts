@@ -64,9 +64,18 @@ export interface OptimizationState {
   combinationsPerSecond: number;
   error: string | null;
   activeRunId: number | null;
+  bestTrainReturn: number | null;
+  bestTestReturn: number | null;
+  // Queue
+  symbolQueue: string[];
+  queueIndex: number;
+  queueResults: Record<string, 'pending' | 'running' | 'done' | 'failed'>;
+  // Stage estimates
+  stageEstimates: Record<number, number>;
 
   // Actions
   runOptimization: (symbol: string, queryClient: any) => Promise<void>;
+  runOptimizationQueue: (symbols: string[], queryClient: any) => Promise<void>;
   stopOptimization: () => void;
   toggleStage: (index: number, enabled: boolean) => void;
   resetState: () => void;
@@ -113,6 +122,12 @@ export const useOptimizationStore = create<OptimizationState>((set, get) => ({
   combinationsPerSecond: 0,
   error: null,
   activeRunId: null,
+  bestTrainReturn: null,
+  bestTestReturn: null,
+  symbolQueue: [],
+  queueIndex: 0,
+  queueResults: {},
+  stageEstimates: {},
 
   toggleStage: (index, enabled) => {
     set(state => {
@@ -133,6 +148,9 @@ export const useOptimizationStore = create<OptimizationState>((set, get) => ({
       combinationsPerSecond: 0,
       error: null,
       activeRunId: null,
+      bestTrainReturn: null,
+      bestTestReturn: null,
+      stageEstimates: {},
     });
     lastComboCount = 0;
     lastComboTime = 0;
