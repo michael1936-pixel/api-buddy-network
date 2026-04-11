@@ -1,80 +1,32 @@
 
-בדקתי את הקוד ואת ה-replay, והבעיה נראית ברורה:
 
-### מה קורה בפועל
-- זה לא רק “נתקע” — ה-preview עצמו קורס.
-- ב-replay רואים:
-  1. נפתח dialog של האופטימיזציה
-  2. נטענים bars מה-DB עד 12,000
-  3. מגיע ל־“טוען סוכן Train/Test Split”
-  4. ואז הטאב נופל לפני שמופיע Stage 1 אמיתי
-- אין runtime error רגיל, מה שמתאים לקריסת זיכרון / renderer crash.
+## תיקון תצוגת אופטימיזציה — 2 שינויים
 
-### שורש הבעיה
-התקלה המרכזית היא במנוע האופטימיזציה עצמו:
+### 1. ביטול הנעילה של המסך
+כרגע ה-progress מוצג בתוך `Dialog` (מודל) שחוסם את כל המסך. נחליף את זה בקומפוננטה inline — כרטיס שמופיע בתוך הדף עצמו, בלי overlay, כך שאפשר להמשיך לגלול ולראות את הגריד.
 
-1. `smartOptimizer.ts` יוצר `stageConfig` ע"י `const stageConfig = { ...baseConfig }`
-2. בפועל זה משאיר פתוחים כמעט את כל טווחי הפרמטרים, לא רק את הפרמטרים של השלב הנוכחי
-3. `portfolioOptimizer.ts` אוסף את כל ה-ranges דרך `getParameterRanges()`
-4. ואז `generateCombinations()` בונה בזיכרון מערך מלא של כל הקומבינציות
-
-התוצאה:
-- במקום Stage 1 על כמה פרמטרים בלבד, הוא מנסה כמעט brute-force על כל המנוע
-- זה יוצר כמות קומבינציות עצומה וזיכרון עצום
-- ולכן הדפדפן קורס
-
-### בעיה נוספת שמצאתי
-ב־`Backtest.tsx` יש בדיקה:
-- אם יש פחות מ־200 bars → מוריד נתונים
-- אם יש 12,000 bars → הוא חושב שזה “מספיק”
-
-אבל לפי מה שביקשת:
-- צריך לשאוף ל־5 שנים אחורה / בערך 35,000 bars
-- כלומר כרגע הוא לא עושה top-up לנתונים חלקיים
-
-### מה אני אתקן אחרי אישור
-1. **תיקון stage isolation**
-   - ב־`smartOptimizer.ts`
-   - כל שלב יריץ רק את הפרמטרים של אותו שלב
-   - כל שאר הפרמטרים יקובעו לערכי ברירת מחדל / best so far
-
-2. **תיקון memory crash**
-   - ב־`portfolioOptimizer.ts`
-   - להפסיק לבנות `combos[]` מלא בזיכרון
-   - לעבור ל-generator / iteration lazy קומבינציה-אחת-בזמן
-   - עם `abort` ו-yield ל-UI כל כמה קומבינציות
-
-3. **תיקון הורדת נתונים**
-   - ב־`Backtest.tsx`
-   - במקום סף של 200 bars, לבדוק:
-     - האם יש בערך 35K bars
-     - או האם התאריך הכי ישן עדיין לא מגיע ~5 שנים אחורה
-   - אם חסר → להפעיל השלמת נתונים
-
-4. **שיפור פונקציית ההורדה**
-   - ב־`download-historical-data`
-   - להחזיר לא רק כמה bars נוספו עכשיו, אלא גם כמה יש סה״כ אחרי הסנכרון
-   - לאפשר השלמה לסימול שכבר קיים חלקית
-
-5. **שיפור UX של התקדמות**
-   - progress לפי קומבינציות בתוך כל שלב, לא רק לפי מספר stage
-   - להציג:
-     - כמה bars נטענו
-     - כמה קומבינציות רצות
-     - באיזה שלב הוא נמצא באמת
+### 2. העתקת התצוגה מהפרויקט השני (Real-Time Trading Insights)
+נייבא את `SmartOptimizationProgress` מהפרויקט השני ונתאים אותו. התצוגה כוללת:
+- 3 סיבובים (כל אחד עם 7 שלבים) עם צבעים שונים (כחול / כתום / ירוק)
+- Checkbox לכל שלב — אפשר לבטל/להפעיל שלבים
+- Progress bars כפולים — כללי + שלב נוכחי
+- מהירות (קומבינציות/שניה) + זמן משוער
+- תוצאות Train/Test בזמן אמת
+- כפתור "עצור" + "דלג לשלב הבא"
 
 ### קבצים שישתנו
-- `src/lib/optimizer/smartOptimizer.ts`
-- `src/lib/optimizer/portfolioOptimizer.ts`
-- `src/pages/Backtest.tsx`
-- `supabase/functions/download-historical-data/index.ts`
-- `src/components/backtest/OptimizationProgress.tsx`
 
-### תוצאה צפויה
-- המערכת לא תקרוס יותר
-- כל שלב ירוץ באמת רק על הפרמטרים שלו
-- הסימול יקבל השלמה לנתונים עד ~5 שנים / ~35K bars
-- האופטימיזציה תיקח זמן אמיתי, אבל תתקדם בצורה נשלטת וברורה
+| קובץ | שינוי |
+|-------|-------|
+| `src/components/backtest/OptimizationProgress.tsx` | **שכתוב מלא** — מ-Dialog לכרטיס inline עם כל הפיצ'רים מהפרויקט השני |
+| `src/pages/Backtest.tsx` | עדכון ה-state וה-props כדי לתמוך בממשק החדש (enabledStages, stageProgress map, skip, speed) |
+| `src/lib/optimizer/smartOptimizer.ts` | ייצוא `getOptimizationStages` + `StageStatus`/`StageResult` types (אם לא קיימים כבר) |
 
-### הערה טכנית חשובה
-מהקוד הנוכחי, המנוע כאן לא מתנהג כמו מנוע 21 שלבים מבודד כמו שאתה מצפה; כרגע הוא מתחיל בפועל כ-search רחב מדי, ולכן נופל עוד לפני Stage 1 המעשי.
+### פרטים טכניים
+- הקומפוננטה החדשה תהיה `Card` רגיל (לא `Dialog`) — מוצגת מעל הגריד כשיש אופטימיזציה פעילה
+- יתווסף timer (`setInterval`) ב-Backtest.tsx למדידת `elapsedTime`
+- יתווסף חישוב `combinationsPerSecond` מתוך progress updates
+- יתווסף state של `enabledStages: boolean[]` — ברירת מחדל הכל פעיל, אפשר לכבות שלבים pending
+- כפתור "דלג" ישלח signal ל-optimizer לעבור לשלב הבא
+- העיצוב: gradient כהה, border primary, RTL — בדיוק כמו בפרויקט השני
+
