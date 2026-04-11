@@ -234,8 +234,7 @@ export async function optimizePortfolio(
   return finalResult;
 }
 
-// Re-export for compatibility
-export { DEFAULT_CONFIG as SIMULATOR_DEFAULT_CONFIG } from './portfolioSimulator' with {};
+// No re-exports needed
 
 export const DEFAULT_EXTENDED_STOCKS_PARAMETERS: ExtendedStocksStrategyParameters = {
   ma_len: 50, signals_on_close: true,
