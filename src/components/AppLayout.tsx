@@ -24,8 +24,8 @@ export default function AppLayout({ children }: { children: ReactNode }) {
     return () => clearInterval(t);
   }, []);
 
-  const vix = marketData?.VIX?.close;
-  const spy = marketData?.SPY?.close;
+  const vix = marketData?.VIX?.last;
+  const spy = marketData?.SPY?.last;
   const spyPrev = marketData?.SPY?.prev_close;
   const spyChange = spy && spyPrev ? ((spy - spyPrev) / spyPrev * 100) : null;
   const spyUp = spyChange !== null ? spyChange >= 0 : null;
