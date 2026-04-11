@@ -24,7 +24,7 @@ export default function BacktestPage() {
     smartProgress, stageProgressMap, overallCombinations, elapsedTime,
     combinationsPerSecond, error, bestTrainReturn, bestTestReturn,
     symbolQueue, queueIndex, queueResults, stageEstimates,
-    runOptimization, runOptimizationQueue, stopOptimization, toggleStage, rehydrate,
+    runOptimization, runOptimizationQueue, addToQueue, stopOptimization, toggleStage, rehydrate,
   } = useOptimizationStore();
 
   // Compute stage estimates once
@@ -50,6 +50,10 @@ export default function BacktestPage() {
     runOptimizationQueue(symbols, queryClient);
   }, [runOptimizationQueue, queryClient]);
 
+  const handleAddToQueue = useCallback((symbols: string[]) => {
+    addToQueue(symbols);
+  }, [addToQueue]);
+
   const handleSkipStage = useCallback(() => {
     console.log('[Backtest] Skip stage requested');
   }, []);
@@ -58,7 +62,7 @@ export default function BacktestPage() {
 
   return (
     <div className="space-y-4">
-      <SymbolSearch onSelect={handleRunOptimization} onRunQueue={handleRunQueue} disabled={isRunning} />
+      <SymbolSearch onSelect={handleRunOptimization} onRunQueue={handleRunQueue} onAddToQueue={handleAddToQueue} isRunning={isRunning} />
 
       {/* Queue status */}
       {symbolQueue.length > 1 && (

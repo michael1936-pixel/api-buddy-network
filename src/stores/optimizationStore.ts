@@ -76,6 +76,7 @@ export interface OptimizationState {
   // Actions
   runOptimization: (symbol: string, queryClient: any) => Promise<void>;
   runOptimizationQueue: (symbols: string[], queryClient: any) => Promise<void>;
+  addToQueue: (symbols: string[]) => void;
   stopOptimization: () => void;
   toggleStage: (index: number, enabled: boolean) => void;
   resetState: () => void;
@@ -399,17 +400,31 @@ export const useOptimizationStore = create<OptimizationState>((set, get) => ({
     }
   },
 
+  addToQueue: (symbols) => {
+    const { symbolQueue, queueResults } = get();
+    const newSymbols = symbols.filter(s => !symbolQueue.includes(s));
+    if (newSymbols.length === 0) return;
+    set({
+      symbolQueue: [...symbolQueue, ...newSymbols],
+      queueResults: { ...queueResults, ...Object.fromEntries(newSymbols.map(s => [s, 'pending' as const])) },
+    });
+  },
+
   runOptimizationQueue: async (symbols, queryClient) => {
     set({ symbolQueue: symbols, queueIndex: 0, queueResults: Object.fromEntries(symbols.map(s => [s, 'pending' as const])) });
-    for (let i = 0; i < symbols.length; i++) {
+    let i = 0;
+    while (i < get().symbolQueue.length) {
       if (abortController?.signal.aborted) break;
-      set({ queueIndex: i, queueResults: { ...get().queueResults, [symbols[i]]: 'running' } });
+      const currentQueue = get().symbolQueue;
+      const sym = currentQueue[i];
+      set({ queueIndex: i, queueResults: { ...get().queueResults, [sym]: 'running' } });
       try {
-        await get().runOptimization(symbols[i], queryClient);
-        set({ queueResults: { ...get().queueResults, [symbols[i]]: 'done' } });
+        await get().runOptimization(sym, queryClient);
+        set({ queueResults: { ...get().queueResults, [sym]: 'done' } });
       } catch {
-        set({ queueResults: { ...get().queueResults, [symbols[i]]: 'failed' } });
+        set({ queueResults: { ...get().queueResults, [sym]: 'failed' } });
       }
+      i++;
     }
     set({ symbolQueue: [], queueIndex: 0 });
   },
