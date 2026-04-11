@@ -1,32 +1,41 @@
 
 
-## תיקון תצוגת אופטימיזציה — 2 שינויים
+## תיקון מהירות + התאמת תצוגה מהפרויקט השני
 
-### 1. ביטול הנעילה של המסך
-כרגע ה-progress מוצג בתוך `Dialog` (מודל) שחוסם את כל המסך. נחליף את זה בקומפוננטה inline — כרטיס שמופיע בתוך הדף עצמו, בלי overlay, כך שאפשר להמשיך לגלול ולראות את הגריד.
+### בעיה 1: מהירות 0.4 קומב׳/שניה (במקום 300)
 
-### 2. העתקת התצוגה מהפרויקט השני (Real-Time Trading Insights)
-נייבא את `SmartOptimizationProgress` מהפרויקט השני ונתאים אותו. התצוגה כוללת:
-- 3 סיבובים (כל אחד עם 7 שלבים) עם צבעים שונים (כחול / כתום / ירוק)
-- Checkbox לכל שלב — אפשר לבטל/להפעיל שלבים
-- Progress bars כפולים — כללי + שלב נוכחי
-- מהירות (קומבינציות/שניה) + זמן משוער
-- תוצאות Train/Test בזמן אמת
-- כפתור "עצור" + "דלג לשלב הבא"
+**שורש הבעיה**: ב-`portfolioOptimizer.ts` יש yield ל-UI כל 16ms עם `setTimeout(0)`. בפועל `setTimeout(0)` לוקח ~4ms מינימום בדפדפן, וכשכל קומבינציה מעבדת 12,374 bars עם חישובי אינדיקטורים — ה-yield קורה כמעט אחרי כל קומבינציה, מה שהורג את הביצועים.
+
+**תיקון**: לעבור ל-yield כל 20 קומבינציות עם `requestAnimationFrame` — בדיוק כמו בפרויקט השני:
+```typescript
+// במקום yield כל 16ms:
+if (processedCount % 20 === 0) {
+  await new Promise(resolve => {
+    requestAnimationFrame(() => resolve(undefined));
+  });
+  // update progress here
+}
+```
+זה יתן שיפור של x50-x100 במהירות.
+
+### בעיה 2: התצוגה לא זהה
+
+ההבדלים בין הקומפוננטה הנוכחית לפרויקט השני:
+- חסר `preRunMode` (מצב לפני הרצה)
+- חסר `onRoundToggle` (toggle כל סיבוב)  
+- חסר תצוגת "שלב נוכחי" (Train/Test results) ו-"הטוב ביותר כללי" עם Zap icon
+- חסר Legend בתחתית (Train/Test/הושלם/הושבת)
+
+**תיקון**: העתקה ישירה של הקומפוננטה מהפרויקט השני (`SmartOptimizationProgress.tsx` — 674 שורות) עם התאמות import בלבד.
 
 ### קבצים שישתנו
 
 | קובץ | שינוי |
 |-------|-------|
-| `src/components/backtest/OptimizationProgress.tsx` | **שכתוב מלא** — מ-Dialog לכרטיס inline עם כל הפיצ'רים מהפרויקט השני |
-| `src/pages/Backtest.tsx` | עדכון ה-state וה-props כדי לתמוך בממשק החדש (enabledStages, stageProgress map, skip, speed) |
-| `src/lib/optimizer/smartOptimizer.ts` | ייצוא `getOptimizationStages` + `StageStatus`/`StageResult` types (אם לא קיימים כבר) |
+| `src/lib/optimizer/portfolioOptimizer.ts` | yield כל 20 קומבינציות עם `requestAnimationFrame` במקום כל 16ms עם `setTimeout` |
+| `src/components/backtest/OptimizationProgress.tsx` | העתקה מהפרויקט השני עם התאמת imports |
 
-### פרטים טכניים
-- הקומפוננטה החדשה תהיה `Card` רגיל (לא `Dialog`) — מוצגת מעל הגריד כשיש אופטימיזציה פעילה
-- יתווסף timer (`setInterval`) ב-Backtest.tsx למדידת `elapsedTime`
-- יתווסף חישוב `combinationsPerSecond` מתוך progress updates
-- יתווסף state של `enabledStages: boolean[]` — ברירת מחדל הכל פעיל, אפשר לכבות שלבים pending
-- כפתור "דלג" ישלח signal ל-optimizer לעבור לשלב הבא
-- העיצוב: gradient כהה, border primary, RTL — בדיוק כמו בפרויקט השני
+### תוצאה צפויה
+- מהירות ~200-400 קומב׳/שניה (כמו בפרויקט השני)
+- תצוגה זהה לפרויקט השני
 
