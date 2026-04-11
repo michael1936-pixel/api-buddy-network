@@ -164,10 +164,11 @@ interface RoundSectionProps {
   currentStage: number;
   stageProgressMap?: { [stageNumber: number]: { current: number; total: number } };
   startIndex: number;
+  stageEstimates?: Record<number, number>;
 }
 
 const RoundSection: React.FC<RoundSectionProps> = ({
-  roundNumber, stages, stageResults, enabledStages, onStageToggle, currentStage, stageProgressMap, startIndex
+  roundNumber, stages, stageResults, enabledStages, onStageToggle, currentStage, stageProgressMap, startIndex, stageEstimates
 }) => {
   const roundInfo = getRoundInfo(roundNumber);
   const [isExpanded, setIsExpanded] = React.useState(roundNumber === 1);
