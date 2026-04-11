@@ -1,69 +1,68 @@
 
 
-## מנוע אופטימיזציה אוטומטי — לחיצה על מניה מפעילה הכל
+## תיקון דף Backtest — שורת חיפוש + הורדת נתונים אוטומטית + סוכני Train/Test
 
-### הרעיון
-המשתמש לוחץ על מניה בגריד → הסוכנים מריצים לבד את כל התהליך:
-1. הורדת נתונים (market_data מה-DB)
-2. חלוקה אוטומטית ל-train/test (70/30)
-3. הרצת SmartOptimizer עם preset config (21 שלבים × 3 סבבים)
-4. שמירת תוצאות ל-optimization_results
-5. עדכון הגריד בזמן אמת
+### הבעיה
+1. אין שורת חיפוש — אי אפשר למצוא מניה בקלות
+2. אין מספיק נתונים ב-DB (SPY=93 bars, NVDA=35) — צריך לפחות 200
+3. ה-train/test split קשיח 70/30 במקום להשתמש בסוכן שלומד
 
-### מה קיים ומה חסר
+### מה ייבנה
 
-**קיים ועובד:**
-- `smartOptimizer.ts` — 368 שורות, 7 שלבים × 3 סבבים, מנגנון שלם
-- `strategies.ts` — 5 אסטרטגיות (EMA Trend, Bollinger, Breakout, Inside Bar, ATR Squeeze)
-- `indicators.ts` — RSI, EMA, ATR, ADX, Bollinger Bands
-- `strategyEngine.ts` — מנוע סימולציה עם כל הלוגיקה
-- `presetConfigs.ts` — NNE preset מוכן
-- `types.ts` — כל הטיפוסים
+**1. שורת חיפוש בראש הדף**
+- Input עם autocomplete מתוך `sp500_symbols` + `tracked_symbols`
+- אפשר לכתוב כל סימול (גם לא S&P)
+- לחיצה על תוצאה → מפעיל את כל הזרימה
 
-**Stubs שצריך לממש:**
-- `portfolioOptimizer.ts` — stub, צריך לממש backtest אמיתי עם `strategyEngine`
-- `portfolioSimulator.ts` — stub, צריך לממש סימולטור פורטפוליו
+**2. Edge Function: `download-historical-data`**
+- מקבל symbol, מוריד 5 שנים של 15min bars מ-Twelve Data
+- Twelve Data נותן מקסימום 5000 bars per request → צריך pagination (כ-8 requests ל-5 שנים)
+- שומר ל-`market_data` table
+- מעדכן `data_download_jobs` עם סטטוס
+- מעדכן `tracked_symbols` עם `total_bars`
 
-**חסר לגמרי:**
-- Click handler על מניה בגריד
-- קומפוננטת Progress עם שלבי אופטימיזציה
-- שמירת תוצאות ל-DB אחרי סיום
+**3. סוכני Train/Test Split + Test Threshold (client-side)**
+- מימוש `TrainTestSplitAgent` ב-client — טוען מ-`agent_memory` table
+- מימוש `TestThresholdAgent` ב-client — מעריך אם תוצאה "עוברת"
+- ה-split נקבע דינמית לפי מה שהסוכן למד (ברירת מחדל 30% train / 70% test)
+- אחרי אופטימיזציה: TestThresholdAgent מחליט passed/failed + score
 
-### שלבי מימוש
+**4. זרימה מלאה בלחיצה על מניה**
+```text
+User types "AAPL" → selects from search
+  ↓
+Check market_data count for AAPL
+  ↓ (< 200 bars?)
+Call download-historical-data edge function
+  ↓ (downloads ~33K bars, 5 years of 15min)
+Load TrainTestSplitAgent from agent_memory
+  ↓ (gets recommended split, e.g. 30% train)
+Run smartOptimization with dynamic split
+  ↓
+TestThresholdAgent evaluates result (score 0-100)
+  ↓
+Save to optimization_results with agent decision
+```
 
-**שלב 1: מימוש portfolioSimulator.ts**
-- לקחת candles מה-DB לפי סימול
-- להריץ `evaluateAllSignals` + trade management loop
-- להחזיר `BacktestResult` עם trades, return, drawdown, win rate
+### קבצים
 
-**שלב 2: מימוש portfolioOptimizer.ts**
-- grid search על פרמטרים לפי config ranges
-- הרצת portfolioSimulator לכל קומבינציה
-- החזרת `MultiObjectiveResult` עם best params
-
-**שלב 3: עדכון Backtest.tsx**
-- לחיצה על מניה → פותח dialog של התקדמות
-- טוען נתונים מ-`market_data` table לפי סימול
-- מחלק אוטומטית ל-70% train / 30% test
-- מריץ `runSmartOptimization` עם preset config
-- Progress bar עם שם שלב נוכחי + אחוזים
-- כפתור ביטול
-
-**שלב 4: שמירת תוצאות**
-- בסיום: insert ל-`optimization_results` עם כל המטריקות
-- עדכון הגריד אוטומטית (React Query invalidation)
-
-### קבצים שישתנו
 | קובץ | שינוי |
 |-------|-------|
-| `src/lib/optimizer/portfolioSimulator.ts` | מימוש מלא — backtest engine |
-| `src/lib/optimizer/portfolioOptimizer.ts` | מימוש מלא — grid search |
-| `src/pages/Backtest.tsx` | click handler + optimization dialog |
-| `src/components/backtest/OptimizationProgress.tsx` | חדש — progress UI |
+| `supabase/functions/download-historical-data/index.ts` | **חדש** — Edge Function להורדת 5 שנים נתונים מ-Twelve Data |
+| `src/lib/optimizer/trainTestSplitAgent.ts` | **חדש** — סוכן split (client-side, טוען מ-agent_memory) |
+| `src/lib/optimizer/testThresholdAgent.ts` | **חדש** — סוכן threshold (client-side, מעריך תוצאות) |
+| `src/pages/Backtest.tsx` | שורת חיפוש + שילוב הסוכנים בזרימת האופטימיזציה |
+| `src/components/backtest/SymbolSearch.tsx` | **חדש** — קומפוננטת חיפוש מניה |
 
-### הערות טכניות
-- האופטימיזציה רצה בדפדפן (client-side) — מתאים למניה בודדת
-- לסריקת 420 מניות צריך את שרת Railway
-- נשתמש ב-`requestAnimationFrame` batching כדי לא לתקוע את ה-UI
-- `AbortController` לביטול
+### Edge Function — download-historical-data
+- משתמש ב-`TWELVE_DATA_API_KEY` (כבר קיים ב-secrets)
+- Twelve Data: `outputsize=5000` נותן 5000 bars, צריך ~7 requests עם `start_date/end_date` לכיסוי 5 שנים
+- Rate limit: 8 requests/min ב-free tier → מוסיף delay בין requests
+- שומר batch ב-upsert ל-`market_data` (on conflict: symbol+interval+timestamp)
+- מחזיר progress updates (כמה bars הורדו)
+
+### הערות
+- הסוכנים רצים client-side (קוראים מ-agent_memory) — הסנכרון עם Claude יהיה דרך שרת Railway
+- ה-TestThresholdAgent משתמש בציון 0-100: עובר מ-70+ נקודות
+- אם אין state ב-agent_memory (ריק כרגע) → משתמש בברירות מחדל מהמסמך
 
