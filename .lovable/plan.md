@@ -1,43 +1,39 @@
 
 
-## תיקון מהירות — `toLocaleString` הוא צוואר הבקבוק
+## תיקון מהירות — 3 באגים קריטיים שהורגים ביצועים
 
-### שורש הבעיה
-ב-`strategyEngine.ts` שורה 85, **כל קריאה ל-`evaluateAllSignals`** מריצה:
+### באג 1: `candles.map()` בכל קריאה לאסטרטגיות 3 ו-5 (הכי חמור)
+ב-`strategies.ts`, אסטרטגיות 3 ו-5 מריצות:
 ```javascript
-dateObj.toLocaleString('en-US', { timeZone: 'Asia/Jerusalem', hour12: false });
+const highs = candles.map(c => c.high);  // מערך חדש של 6,000 אלמנטים
+const lows  = candles.map(c => c.low);   // מערך חדש של 6,000 אלמנטים
 ```
+**בכל קריאה, בכל bar, בכל קומבינציה**. עם 6,000 bars × 3,000 קומבינציות = **36 מיליון הקצאות מערכים** — כל אחד 6,000 אלמנטים. זה GC hell.
 
-זו פונקציה **איטית מאוד** — כל קריאה לוקחת ~0.1-0.5ms בגלל ICU lookup + timezone conversion + string parsing. עם ~6,000 bars × 3,000 קומבינציות = **18 מיליון קריאות** → ~30-150 דקות רק על שורה אחת.
+**תיקון**: `highs[]` ו-`lows[]` כבר חושבו ב-`buildIndicators`. נוסיף אותם ל-`StrategyIndicators` ונשתמש בהם ישירות.
 
-**בפרויקט השני אין את הבדיקה הזו כלל** — אין session time check בלולאה הפנימית.
+### באג 2: `evaluateAllSignals` מחזיר אובייקט ענק בכל bar
+הפונקציה בונה אובייקט `EngineResult` עם `layer3` (12 שדות) + `s2Layers` בכל bar — ~6,000 אובייקטים לקומבינציה × 3,000 = 18M אובייקטים. רובם לא בשימוש.
 
-### הפתרון — Pre-compute timezone פעם אחת
+**תיקון**: להחזיר רק `buyFinal`, `sellFinal`, `entryStrategyId` מהלולאה החמה. `layer3` ו-debug רק כשצריך.
 
-במקום לחשב timezone בכל bar בכל קומבינציה, נחשב **פעם אחת** מערך `sessionMinutes[]` ב-`buildIndicators` (או ב-init) ונשתמש בו ישירות:
+### באג 3: `calculateMonthlyPerformance` ו-`trades` array בכל קומבינציה
+כל קומבינציה שומרת את כל ה-trades ואז מחשבת monthly performance — ומעבירה הכל דרך `postMessage`. עם batch של 50 תוצאות, כל אחת עם 10-100 trades — זה structured clone כבד.
 
-```typescript
-// Pre-compute once per candle set:
-const JERUSALEM_OFFSET_MS = 3 * 3600000; // UTC+3 (summer) or UTC+2
-const sessionMinutes = candles.map(c => {
-  const d = new Date(c.timestamp + JERUSALEM_OFFSET_MS);
-  return d.getUTCHours() * 60 + d.getUTCMinutes();
-});
-
-// In hot loop — just array lookup, zero overhead:
-const totalMinJerusalem = sessionMinutes[i];
-```
+**תיקון**: ב-Worker, לא לשמור trades array בתוצאות. לחשב רק מטריקות מספריות.
 
 ### קבצים שישתנו
 
 | קובץ | שינוי |
 |-------|-------|
-| `src/lib/optimizer/strategyEngine.ts` | הסרת `toLocaleString` מהלולאה, קבלת `sessionMinutes[]` כפרמטר |
-| `src/lib/optimizer/portfolioSimulator.ts` | חישוב `sessionMinutes[]` פעם אחת ב-`buildIndicators` או ב-`runSingleBacktestWithIndicators`, העברה ל-`evaluateAllSignals` |
-| `src/workers/optimizer.worker.ts` | עדכון קטן אם צריך להעביר את המערך |
+| `src/lib/optimizer/strategies.ts` | S3 ו-S5: לקבל `highs`/`lows` מ-indicators במקום `.map()` |
+| `src/lib/optimizer/strategies.ts` (StrategyIndicators) | הוספת `highs: number[]`, `lows: number[]` לממשק |
+| `src/lib/optimizer/portfolioSimulator.ts` | `buildIndicators`: להוסיף `highs`/`lows` ל-indicators |
+| `src/lib/optimizer/strategyEngine.ts` | `evaluateAllSignals`: החזרת struct קטן (3 שדות) בלולאה החמה |
+| `src/workers/optimizer.worker.ts` | הסרת trades מתוצאות batch, הסרת monthly performance |
 
 ### תוצאה צפויה
-- שיפור ×100-500 — מ-0.3 ל-~100-400 קומב׳/שניה
-- אותה תוצאה מתמטית (אותו חישוב timezone, רק פעם אחת)
-- בשילוב ה-indicator cache שכבר קיים — מהירות מקסימלית
+- שיפור ×50-200 — הבאגים של `.map()` לבד אחראים לרוב האיטיות
+- אותה תוצאה מתמטית בדיוק
+- הדף נשאר רספונסיבי
 
