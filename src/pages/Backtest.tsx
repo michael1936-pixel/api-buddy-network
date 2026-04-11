@@ -1,12 +1,18 @@
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import { useOptimizationResults, useTrackedSymbols } from "@/hooks/use-trading-data";
 import { cn } from "@/lib/utils";
 import { supabase } from "@/integrations/supabase/client";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "@/hooks/use-toast";
-import OptimizationProgress, { OptimizationStatus } from "@/components/backtest/OptimizationProgress";
+import { SmartOptimizationProgressCard } from "@/components/backtest/OptimizationProgress";
 import SymbolSearch from "@/components/backtest/SymbolSearch";
-import { runSmartOptimization } from "@/lib/optimizer/smartOptimizer";
+import {
+  runSmartOptimization,
+  getOptimizationStages,
+  type SmartOptimizationProgress,
+  type StageStatus,
+  type StageResult,
+} from "@/lib/optimizer/smartOptimizer";
 import { NNE_PRESET_CONFIG } from "@/lib/optimizer/presetConfigs";
 import { TrainTestSplitAgent } from "@/lib/optimizer/trainTestSplitAgent";
 import { TestThresholdAgent } from "@/lib/optimizer/testThresholdAgent";
@@ -65,76 +71,97 @@ export default function BacktestPage() {
   const queryClient = useQueryClient();
   const abortRef = useRef<AbortController | null>(null);
 
-  const [optStatus, setOptStatus] = useState<OptimizationStatus>({
-    isRunning: false, symbol: '', stageName: '', stageDescription: '',
-    currentStage: 0, totalStages: 0, percent: 0,
-    barsLoaded: 0, targetBars: HISTORY_TARGET_BARS,
-    combosCompleted: 0, combosTotal: 0,
-  });
+  // Smart optimization UI state
+  const allStages = getOptimizationStages();
+  const [isRunning, setIsRunning] = useState(false);
+  const [currentSymbol, setCurrentSymbol] = useState('');
+  const [enabledStages, setEnabledStages] = useState<boolean[]>(() => allStages.map(() => true));
+  const [stageStatuses, setStageStatuses] = useState<StageStatus[]>(() =>
+    allStages.map(s => ({ stageNumber: s.stageNumber, stageName: s.name, status: 'pending' as const }))
+  );
+  const [stageResults, setStageResults] = useState<StageResult[]>([]);
+  const [smartProgress, setSmartProgress] = useState<SmartOptimizationProgress | null>(null);
+  const [stageProgressMap, setStageProgressMap] = useState<{ [stageNumber: number]: { current: number; total: number } }>({});
+  const [overallCombinations, setOverallCombinations] = useState<{ current: number; total: number }>({ current: 0, total: 0 });
+  const [elapsedTime, setElapsedTime] = useState(0);
+  const [combinationsPerSecond, setCombinationsPerSecond] = useState(0);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const startTimeRef = useRef<number>(0);
+  const lastComboCountRef = useRef<number>(0);
+  const lastComboTimeRef = useRef<number>(0);
+
+  // Elapsed timer
+  useEffect(() => {
+    if (isRunning) {
+      startTimeRef.current = Date.now();
+      timerRef.current = setInterval(() => {
+        setElapsedTime((Date.now() - startTimeRef.current) / 1000);
+      }, 1000);
+    } else {
+      if (timerRef.current) clearInterval(timerRef.current);
+    }
+    return () => { if (timerRef.current) clearInterval(timerRef.current); };
+  }, [isRunning]);
+
+  const handleStageToggle = useCallback((stageIndex: number, enabled: boolean) => {
+    setEnabledStages(prev => {
+      const next = [...prev];
+      next[stageIndex] = enabled;
+      return next;
+    });
+  }, []);
+
+  const handleSkipStage = useCallback(() => {
+    // The skip is handled via abort + re-run logic; for now just log
+    console.log('[Backtest] Skip stage requested');
+  }, []);
+
+  const handleStop = useCallback(() => {
+    abortRef.current?.abort();
+    setIsRunning(false);
+  }, []);
+
+  const resetState = useCallback(() => {
+    setStageStatuses(allStages.map(s => ({ stageNumber: s.stageNumber, stageName: s.name, status: 'pending' as const })));
+    setStageResults([]);
+    setSmartProgress(null);
+    setStageProgressMap({});
+    setOverallCombinations({ current: 0, total: 0 });
+    setElapsedTime(0);
+    setCombinationsPerSecond(0);
+    lastComboCountRef.current = 0;
+    lastComboTimeRef.current = 0;
+  }, [allStages]);
 
   const runOptimization = useCallback(async (symbol: string) => {
-    if (optStatus.isRunning) return;
+    if (isRunning) return;
 
     const controller = new AbortController();
     abortRef.current = controller;
 
-    setOptStatus({
-      isRunning: true, symbol, stageName: 'בודק נתונים...', stageDescription: `בודק כמות נתונים עבור ${symbol}`,
-      currentStage: 0, totalStages: 21, percent: 0,
-      barsLoaded: 0, targetBars: HISTORY_TARGET_BARS,
-      combosCompleted: 0, combosTotal: 0,
-    });
+    resetState();
+    setIsRunning(true);
+    setCurrentSymbol(symbol);
 
     try {
       const summary = await getMarketDataSummary(symbol);
 
-      setOptStatus((prev) => ({
-        ...prev,
-        barsLoaded: summary.barCount,
-        targetBars: HISTORY_TARGET_BARS,
-        stageDescription: `נמצאו ${summary.barCount.toLocaleString()} bars עבור ${symbol}`,
-      }));
-
       if (needsHistoricalTopUp(summary)) {
-        setOptStatus(prev => ({
-          ...prev,
-          stageName: 'מסנכרן היסטוריה...',
-          stageDescription: `משלים ${symbol} עד ~${HISTORY_TARGET_BARS.toLocaleString()} bars / ${HISTORY_TARGET_YEARS} שנים`,
-          percent: 2,
-        }));
-
         const { data: dlResult, error: dlError } = await supabase.functions.invoke('download-historical-data', {
           body: { symbol, target_years: HISTORY_TARGET_YEARS, target_bars: HISTORY_TARGET_BARS },
         });
-
         if (dlError) throw new Error(`שגיאה בהורדת נתונים: ${dlError.message}`);
-
         const syncedBars = dlResult?.total_bars ?? dlResult?.bars_downloaded ?? summary.barCount;
-        if (syncedBars < 200) {
-          throw new Error(`לא הצלחתי להוריד מספיק נתונים: ${syncedBars || 0} bars`);
-        }
-
+        if (syncedBars < 200) throw new Error(`לא מספיק נתונים: ${syncedBars || 0} bars`);
         queryClient.invalidateQueries({ queryKey: ['tracked_symbols'] });
-
-        toast({
-          title: `📊 ${symbol}`,
-          description: `יש כעת ${syncedBars.toLocaleString()} bars (${(dlResult?.bars_added || 0).toLocaleString()} חדשים)`,
-        });
+        toast({ title: `📊 ${symbol}`, description: `${syncedBars.toLocaleString()} bars (${(dlResult?.bars_added || 0).toLocaleString()} חדשים)` });
       }
 
-      setOptStatus(prev => ({
-        ...prev, stageName: 'טוען נתונים...', stageDescription: `טוען נתוני ${symbol} מה-DB`,
-        percent: 5,
-      }));
-
+      // Load all bars with pagination
       let allBars: any[] = [];
       let offset = 0;
-
       while (true) {
-        if (controller.signal.aborted) {
-          throw new DOMException('Optimization aborted', 'AbortError');
-        }
-
+        if (controller.signal.aborted) throw new DOMException('Aborted', 'AbortError');
         const { data: page, error: pageErr } = await supabase
           .from('market_data')
           .select('timestamp, open, high, low, close, volume')
@@ -142,51 +169,27 @@ export default function BacktestPage() {
           .eq('interval', MARKET_DATA_INTERVAL)
           .order('timestamp', { ascending: true })
           .range(offset, offset + MARKET_DATA_PAGE_SIZE - 1);
-
         if (pageErr) throw new Error(`שגיאה בטעינת נתונים: ${pageErr.message}`);
         if (!page || page.length === 0) break;
-
         allBars.push(...page);
         offset += page.length;
-
-        setOptStatus(prev => ({
-          ...prev,
-          barsLoaded: allBars.length,
-          targetBars: HISTORY_TARGET_BARS,
-          stageDescription: `טוען נתוני ${symbol}... ${allBars.length.toLocaleString()} / ~${HISTORY_TARGET_BARS.toLocaleString()} bars`,
-        }));
-
         if (page.length < MARKET_DATA_PAGE_SIZE) break;
       }
 
-      const marketData = allBars;
-      if (marketData.length < 200) {
-        throw new Error(`לא מספיק נתונים ל-${symbol}: ${marketData.length} bars (צריך לפחות 200)`);
-      }
+      if (allBars.length < 200) throw new Error(`לא מספיק נתונים ל-${symbol}: ${allBars.length} bars`);
+      console.log(`[Backtest] Loaded ${allBars.length.toLocaleString()} bars for ${symbol}`);
 
-      console.log(`[Backtest] Loaded ${marketData.length.toLocaleString()} bars for ${symbol}`);
-
-      // 4. Convert to Candle format
-      const candles: Candle[] = marketData.map(bar => ({
+      const candles: Candle[] = allBars.map(bar => ({
         timestamp: new Date(bar.timestamp).getTime(),
         open: bar.open, high: bar.high, low: bar.low, close: bar.close,
         volume: bar.volume || 0,
       }));
 
-      // 5. Load TrainTestSplitAgent for dynamic split
-      setOptStatus(prev => ({
-        ...prev, stageName: 'טוען סוכנים...', stageDescription: 'טוען סוכן Train/Test Split',
-        percent: 8,
-      }));
-
+      // Train/Test split
       const splitAgent = new TrainTestSplitAgent();
       await splitAgent.load();
       const trainPercent = splitAgent.getRecommendedSplit('15min');
-      const splitRec = splitAgent.getRecommendation();
 
-      console.log(`[Backtest] Using train/test split: ${trainPercent}/${100 - trainPercent} (confidence: ${splitRec.confidence}%)`);
-
-      // 6. Build period split
       const splitIdx = Math.min(candles.length - 1, Math.max(1, Math.floor(candles.length * (trainPercent / 100))));
       const periodSplit: PeriodSplit = {
         trainStartDate: new Date(candles[0].timestamp),
@@ -196,46 +199,57 @@ export default function BacktestPage() {
         trainPercent,
       };
 
-      const symbolData: SymbolData[] = [{
-        symbol,
-        candles,
-        startDate: new Date(candles[0].timestamp),
-        endDate: new Date(candles[candles.length - 1].timestamp),
-      }];
+      const symbolData: SymbolData[] = [{ symbol, candles, startDate: new Date(candles[0].timestamp), endDate: new Date(candles[candles.length - 1].timestamp) }];
 
-      // 7. Run smart optimization
+      // Run optimizer
       const result = await runSmartOptimization(
         symbolData, NNE_PRESET_CONFIG, periodSplit, 'single', {},
         (progress) => {
-          const stageFraction = progress.totalStages > 0
-            ? ((progress.currentStage - 1) + (progress.total > 0 ? progress.current / progress.total : 0)) / progress.totalStages
-            : 0;
+          setSmartProgress(progress);
+          
+          // Update stage statuses
+          setStageStatuses(prev => {
+            const next = [...prev];
+            for (let i = 0; i < next.length; i++) {
+              if (i + 1 < progress.currentStage) {
+                if (next[i].status !== 'completed' && next[i].status !== 'skipped') next[i].status = 'completed';
+              } else if (i + 1 === progress.currentStage) {
+                next[i].status = 'running';
+              }
+            }
+            return next;
+          });
 
-          setOptStatus(prev => ({
+          // Update stage progress map
+          setStageProgressMap(prev => ({
             ...prev,
-            stageName: progress.stageName,
-            stageDescription: progress.stageDescription,
-            currentStage: progress.currentStage,
-            totalStages: progress.totalStages,
-            percent: Math.round(10 + stageFraction * 85),
-            bestTrainReturn: progress.bestTrainReturn,
-            bestTestReturn: progress.bestTestReturn,
-            barsLoaded: candles.length,
-            targetBars: HISTORY_TARGET_BARS,
-            combosCompleted: progress.current,
-            combosTotal: progress.total,
+            [progress.currentStage]: { current: progress.current, total: progress.total },
           }));
+
+          // Overall combos
+          setOverallCombinations({ current: progress.current, total: progress.total });
+
+          // Speed calc
+          const now = Date.now();
+          if (now - lastComboTimeRef.current > 2000) {
+            const dt = (now - lastComboTimeRef.current) / 1000;
+            const dc = progress.current - lastComboCountRef.current;
+            if (dt > 0 && dc > 0) setCombinationsPerSecond(dc / dt);
+            lastComboCountRef.current = progress.current;
+            lastComboTimeRef.current = now;
+          }
         },
         controller.signal,
         false, 'profit', true, true,
+        enabledStages,
       );
 
       if (controller.signal.aborted) {
-        setOptStatus(prev => ({ ...prev, isRunning: false, completed: false }));
+        setIsRunning(false);
         return;
       }
 
-      // 8. Evaluate with TestThresholdAgent
+      // Evaluate with TestThresholdAgent
       const best = result.finalResult.bestForProfit;
       if (best) {
         const trainReturn = best.totalTrainReturn;
@@ -247,23 +261,13 @@ export default function BacktestPage() {
         const sharpeRatio = testResult?.sharpeRatio || trainResult?.sharpeRatio || 0;
         const totalTrades = (trainResult?.totalTrades || 0) + (testResult?.totalTrades || 0);
 
-        setOptStatus(prev => ({
-          ...prev, stageName: 'מעריך תוצאות...', stageDescription: 'סוכן Test Threshold מעריך',
-          percent: 97,
-        }));
-
         const thresholdAgent = new TestThresholdAgent();
         await thresholdAgent.load();
-        const evaluation = thresholdAgent.evaluate({
-          trainReturn, testReturn, winRate, maxDrawdown, sharpeRatio, totalTrades,
-        });
-
-        console.log(`[Backtest] Evaluation: score=${evaluation.score}, passed=${evaluation.passed}`, evaluation.reasons);
+        const evaluation = thresholdAgent.evaluate({ trainReturn, testReturn, winRate, maxDrawdown, sharpeRatio, totalTrades });
 
         const overfit = trainReturn > 0 ? Math.abs(trainReturn - testReturn) / trainReturn : 0;
         const overfitRisk = overfit < 0.3 ? 'low' : overfit < 0.6 ? 'medium' : 'high';
 
-        // 9. Save results to DB
         await supabase.from('optimization_results').insert({
           symbol,
           parameters: best.parameters as any,
@@ -281,49 +285,33 @@ export default function BacktestPage() {
 
         queryClient.invalidateQueries({ queryKey: ['optimization_results'] });
 
-        const emoji = evaluation.passed ? '✅' : '❌';
         toast({
-          title: `${emoji} ${symbol} — ציון ${evaluation.score.toFixed(0)}/100`,
-          description: `Train: ${trainReturn.toFixed(1)}% | Test: ${testReturn.toFixed(1)}% | Split: ${trainPercent}/${100 - trainPercent}${evaluation.reasons.length > 0 ? '\n' + evaluation.reasons[0] : ''}`,
+          title: `${evaluation.passed ? '✅' : '❌'} ${symbol} — ציון ${evaluation.score.toFixed(0)}/100`,
+          description: `Train: ${trainReturn.toFixed(1)}% | Test: ${testReturn.toFixed(1)}%`,
         });
       }
 
-      setOptStatus(prev => ({ ...prev, isRunning: false, completed: true }));
+      // Update stage results from optimizer result
+      if (result.stageResults) setStageResults(result.stageResults);
+
+      // Mark all stages completed
+      setStageStatuses(prev => prev.map(s => s.status === 'running' ? { ...s, status: 'completed' as const } : s));
+      setIsRunning(false);
     } catch (err: any) {
-      if (err.name === 'AbortError' || controller.signal.aborted) {
-        setOptStatus(prev => ({ ...prev, isRunning: false }));
+      if (err.name === 'AbortError' || abortRef.current?.signal.aborted) {
+        setIsRunning(false);
         return;
       }
-      setOptStatus(prev => ({ ...prev, isRunning: false, error: err.message }));
+      setIsRunning(false);
       toast({ title: '❌ שגיאה', description: err.message, variant: 'destructive' });
     }
-  }, [optStatus.isRunning, queryClient]);
+  }, [isRunning, queryClient, enabledStages, resetState]);
 
-  const handleCancel = () => {
-    abortRef.current?.abort();
-    setOptStatus(prev => ({ ...prev, isRunning: false }));
-  };
-
-  const handleClose = () => {
-    setOptStatus({
-      isRunning: false,
-      symbol: '',
-      stageName: '',
-      stageDescription: '',
-      currentStage: 0,
-      totalStages: 0,
-      percent: 0,
-      barsLoaded: 0,
-      targetBars: HISTORY_TARGET_BARS,
-      combosCompleted: 0,
-      combosTotal: 0,
-    });
-  };
+  const showProgress = isRunning || stageResults.length > 0;
 
   return (
     <div className="space-y-4">
-      {/* Search bar */}
-      <SymbolSearch onSelect={runOptimization} disabled={optStatus.isRunning} />
+      <SymbolSearch onSelect={runOptimization} disabled={isRunning} />
 
       <div className="flex justify-between items-center">
         <span className="text-base font-semibold">S&P 500 — {tracked.length || "~420"} מניות</span>
@@ -334,6 +322,27 @@ export default function BacktestPage() {
         💡 חפש מניה למעלה או לחץ בגריד להרצת אופטימיזציה אוטומטית | <span className="text-trading-profit">✅ עבר</span> · <span className="text-trading-loss">❌ נכשל</span> · ⬜ ממתין
       </div>
 
+      {/* Inline progress card — no modal */}
+      {showProgress && (
+        <SmartOptimizationProgressCard
+          stages={stageStatuses}
+          currentStage={smartProgress?.currentStage || 0}
+          totalStages={smartProgress?.totalStages || allStages.length}
+          progress={smartProgress}
+          stageResults={stageResults}
+          onSkipStage={handleSkipStage}
+          onStop={handleStop}
+          elapsedTime={elapsedTime}
+          isRunning={isRunning}
+          enabledStages={enabledStages}
+          onStageToggle={handleStageToggle}
+          stageProgress={stageProgressMap}
+          overallCombinations={overallCombinations}
+          combinationsPerSecond={combinationsPerSecond}
+          symbol={currentSymbol}
+        />
+      )}
+
       {tracked.length > 0 && (
         <div className="grid grid-cols-[repeat(auto-fill,minmax(90px,1fr))] gap-1">
           {tracked.map((s: any) => {
@@ -343,7 +352,7 @@ export default function BacktestPage() {
             const border = isActive ? "hsl(var(--trading-profit))" : opt ? "hsl(var(--trading-loss))" : "hsl(var(--border))";
             const color = isActive ? "hsl(var(--trading-profit))" : opt ? "hsl(var(--trading-loss))" : "hsl(var(--muted-foreground))";
             const icon = isActive ? "✅" : opt ? "❌" : "";
-            const isOptimizing = optStatus.isRunning && optStatus.symbol === s.symbol;
+            const isOptimizing = isRunning && currentSymbol === s.symbol;
             return (
               <div
                 key={s.symbol}
@@ -414,12 +423,6 @@ export default function BacktestPage() {
           </div>
         </div>
       )}
-
-      <OptimizationProgress
-        status={optStatus}
-        onCancel={handleCancel}
-        onClose={handleClose}
-      />
     </div>
   );
 }
