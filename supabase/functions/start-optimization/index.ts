@@ -73,7 +73,9 @@ Deno.serve(async (req) => {
       headers["Authorization"] = `Bearer ${railwayToken}`;
     }
 
-    const railwayResponse = await fetch(`${railwayUrl}/api/optimize`, {
+    // Ensure URL has protocol
+    const baseUrl = railwayUrl.startsWith('http') ? railwayUrl : `https://${railwayUrl}`;
+    const railwayResponse = await fetch(`${baseUrl}/api/optimize`, {
       method: "POST",
       headers,
       body: JSON.stringify({
