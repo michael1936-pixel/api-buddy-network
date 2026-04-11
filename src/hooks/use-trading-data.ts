@@ -42,11 +42,15 @@ export function useSignals(limit = 50) {
   );
 }
 
-export function useOptimizationResults() {
+export function useOptimizationResults(filter?: 'all' | 'approved' | 'rejected') {
+  const f = filter || 'all';
   return useTableQuery(
-    ["optimization_results"],
+    ["optimization_results", f],
     async () => {
-      const { data, error } = await supabase.from("optimization_results").select("*").eq("is_active", true).order("test_return", { ascending: false });
+      let q = supabase.from("optimization_results").select("*").order("optimized_at", { ascending: false });
+      if (f === 'approved') q = q.eq("is_active", true);
+      else if (f === 'rejected') q = q.eq("is_active", false);
+      const { data, error } = await q;
       if (error) throw error;
       return data || [];
     },

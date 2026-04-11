@@ -1,6 +1,7 @@
 /**
  * Global Optimization Store — Zustand
- * Keeps the optimization running even when navigating away from Backtest page
+ * Keeps the optimization running even when navigating away from Backtest page.
+ * Persists progress to optimization_runs table for rehydration.
  */
 import { create } from 'zustand';
 import { supabase } from '@/integrations/supabase/client';
@@ -20,6 +21,7 @@ const HISTORY_TARGET_YEARS = 5;
 const HISTORY_TARGET_BARS = 35000;
 const MARKET_DATA_INTERVAL = '15min';
 const MARKET_DATA_PAGE_SIZE = 1000;
+const PROGRESS_PERSIST_INTERVAL = 5000; // persist every 5s
 
 interface MarketDataSummary {
   barCount: number;
@@ -48,7 +50,7 @@ function needsHistoricalTopUp(s: MarketDataSummary): boolean {
   return new Date(s.oldestTimestamp) > getHistoryTargetDate();
 }
 
-interface OptimizationState {
+export interface OptimizationState {
   // UI state
   isRunning: boolean;
   currentSymbol: string;
@@ -61,12 +63,14 @@ interface OptimizationState {
   elapsedTime: number;
   combinationsPerSecond: number;
   error: string | null;
+  activeRunId: number | null;
 
   // Actions
   runOptimization: (symbol: string, queryClient: any) => Promise<void>;
   stopOptimization: () => void;
   toggleStage: (index: number, enabled: boolean) => void;
   resetState: () => void;
+  rehydrate: () => Promise<void>;
 }
 
 const allStages = getOptimizationStages();
@@ -77,9 +81,24 @@ const initialStageStatuses: StageStatus[] = allStages.map(s => ({
 // Internal refs (not in Zustand state to avoid re-renders)
 let abortController: AbortController | null = null;
 let timerInterval: ReturnType<typeof setInterval> | null = null;
+let progressPersistInterval: ReturnType<typeof setInterval> | null = null;
 let startTime = 0;
 let lastComboCount = 0;
 let lastComboTime = 0;
+
+async function createRun(symbol: string): Promise<number | null> {
+  const { data, error } = await supabase.from('optimization_runs').insert({
+    symbol, status: 'running', total_stages: allStages.length,
+  } as any).select('id').single();
+  if (error) { console.error('[OptStore] Failed to create run:', error.message); return null; }
+  return data?.id ?? null;
+}
+
+async function updateRun(id: number | null, updates: Record<string, any>) {
+  if (!id) return;
+  const { error } = await supabase.from('optimization_runs').update({ ...updates, updated_at: new Date().toISOString() } as any).eq('id', id);
+  if (error) console.error('[OptStore] Failed to update run:', error.message);
+}
 
 export const useOptimizationStore = create<OptimizationState>((set, get) => ({
   isRunning: false,
@@ -93,6 +112,7 @@ export const useOptimizationStore = create<OptimizationState>((set, get) => ({
   elapsedTime: 0,
   combinationsPerSecond: 0,
   error: null,
+  activeRunId: null,
 
   toggleStage: (index, enabled) => {
     set(state => {
@@ -112,15 +132,43 @@ export const useOptimizationStore = create<OptimizationState>((set, get) => ({
       elapsedTime: 0,
       combinationsPerSecond: 0,
       error: null,
+      activeRunId: null,
     });
     lastComboCount = 0;
     lastComboTime = 0;
   },
 
   stopOptimization: () => {
+    const { activeRunId } = get();
     abortController?.abort();
     if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
+    if (progressPersistInterval) { clearInterval(progressPersistInterval); progressPersistInterval = null; }
+    updateRun(activeRunId, { status: 'aborted' });
     set({ isRunning: false });
+  },
+
+  rehydrate: async () => {
+    // Check if there's already a run in progress in memory
+    if (get().isRunning) return;
+    // Load last run from DB to show previous results
+    const { data, error } = await supabase
+      .from('optimization_runs')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(1);
+    if (error || !data || data.length === 0) return;
+    const lastRun = data[0] as any;
+    // If last run was "running" but we're not running, mark as aborted (browser was closed)
+    if (lastRun.status === 'running') {
+      await updateRun(lastRun.id, { status: 'aborted' });
+    }
+    // Restore last run info for display
+    if (lastRun.status === 'completed' || lastRun.status === 'aborted' || lastRun.status === 'failed') {
+      set({
+        currentSymbol: lastRun.symbol,
+        overallCombinations: { current: lastRun.current_combo || 0, total: lastRun.total_combos || 0 },
+      });
+    }
   },
 
   runOptimization: async (symbol, queryClient) => {
@@ -129,7 +177,9 @@ export const useOptimizationStore = create<OptimizationState>((set, get) => ({
 
     abortController = new AbortController();
     state.resetState();
-    set({ isRunning: true, currentSymbol: symbol });
+
+    const runId = await createRun(symbol);
+    set({ isRunning: true, currentSymbol: symbol, activeRunId: runId });
 
     // Start elapsed timer
     startTime = Date.now();
@@ -137,6 +187,21 @@ export const useOptimizationStore = create<OptimizationState>((set, get) => ({
     timerInterval = setInterval(() => {
       set({ elapsedTime: (Date.now() - startTime) / 1000 });
     }, 1000);
+
+    // Start progress persistence
+    if (progressPersistInterval) clearInterval(progressPersistInterval);
+    progressPersistInterval = setInterval(() => {
+      const s = get();
+      if (s.activeRunId && s.isRunning) {
+        updateRun(s.activeRunId, {
+          current_stage: s.smartProgress?.currentStage || 0,
+          current_combo: s.overallCombinations.current,
+          total_combos: s.overallCombinations.total,
+        best_train: s.smartProgress?.bestReturn,
+        best_test: s.smartProgress?.bestTestReturn,
+        });
+      }
+    }, PROGRESS_PERSIST_INTERVAL);
 
     try {
       // 1. Check & download historical data
@@ -193,7 +258,7 @@ export const useOptimizationStore = create<OptimizationState>((set, get) => ({
 
       const symbolData: SymbolData[] = [{ symbol, candles, startDate: new Date(candles[0].timestamp), endDate: new Date(candles[candles.length - 1].timestamp) }];
 
-      // 4. Run optimizer (on main thread — heavy work is in the optimizer's loops)
+      // 4. Run optimizer
       const enabledStages = get().enabledStages;
       const result = await runSmartOptimization(
         symbolData, NNE_PRESET_CONFIG, periodSplit, 'single', {},
@@ -235,6 +300,7 @@ export const useOptimizationStore = create<OptimizationState>((set, get) => ({
 
       if (abortController.signal.aborted) {
         if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
+        if (progressPersistInterval) { clearInterval(progressPersistInterval); progressPersistInterval = null; }
         set({ isRunning: false });
         return;
       }
@@ -258,7 +324,7 @@ export const useOptimizationStore = create<OptimizationState>((set, get) => ({
         const overfit = trainReturn > 0 ? Math.abs(trainReturn - testReturn) / trainReturn : 0;
         const overfitRisk = overfit < 0.3 ? 'low' : overfit < 0.6 ? 'medium' : 'high';
 
-        await supabase.from('optimization_results').insert({
+        const { error: insertErr } = await supabase.from('optimization_results').insert({
           symbol,
           parameters: best.parameters as any,
           train_return: trainReturn,
@@ -273,12 +339,20 @@ export const useOptimizationStore = create<OptimizationState>((set, get) => ({
           agent_confidence: evaluation.score,
         });
 
+        if (insertErr) {
+          console.error('[Optimization] Failed to save result:', insertErr.message);
+          set({ error: `שגיאה בשמירת תוצאה: ${insertErr.message}` });
+        }
+
         queryClient?.invalidateQueries({ queryKey: ['optimization_results'] });
         console.log(`[Optimization] ${symbol} — ${evaluation.passed ? 'APPROVED' : 'REJECTED'} — Score: ${evaluation.score.toFixed(0)}/100 — Train: ${trainReturn.toFixed(1)}% Test: ${testReturn.toFixed(1)}%`);
       }
 
       // Update stage results
       if (result.stageResults) set({ stageResults: result.stageResults });
+
+      // Mark run completed
+      await updateRun(get().activeRunId, { status: 'completed', best_train: best?.totalTrainReturn, best_test: best?.totalTestReturn });
 
       // Mark all completed
       set(state => ({
@@ -289,11 +363,13 @@ export const useOptimizationStore = create<OptimizationState>((set, get) => ({
       if (err.name === 'AbortError' || abortController?.signal.aborted) {
         set({ isRunning: false });
       } else {
+        await updateRun(get().activeRunId, { status: 'failed', error_message: err.message });
         set({ isRunning: false, error: err.message });
         console.error('[Optimization] Error:', err.message);
       }
     } finally {
       if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
+      if (progressPersistInterval) { clearInterval(progressPersistInterval); progressPersistInterval = null; }
     }
   },
 }));

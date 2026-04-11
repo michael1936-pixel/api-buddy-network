@@ -440,6 +440,51 @@ export type Database = {
         }
         Relationships: []
       }
+      optimization_runs: {
+        Row: {
+          best_test: number | null
+          best_train: number | null
+          created_at: string
+          current_combo: number
+          current_stage: number
+          error_message: string | null
+          id: number
+          status: string
+          symbol: string
+          total_combos: number
+          total_stages: number
+          updated_at: string
+        }
+        Insert: {
+          best_test?: number | null
+          best_train?: number | null
+          created_at?: string
+          current_combo?: number
+          current_stage?: number
+          error_message?: string | null
+          id?: never
+          status?: string
+          symbol: string
+          total_combos?: number
+          total_stages?: number
+          updated_at?: string
+        }
+        Update: {
+          best_test?: number | null
+          best_train?: number | null
+          created_at?: string
+          current_combo?: number
+          current_stage?: number
+          error_message?: string | null
+          id?: never
+          status?: string
+          symbol?: string
+          total_combos?: number
+          total_stages?: number
+          updated_at?: string
+        }
+        Relationships: []
+      }
       positions: {
         Row: {
           be_triggered: boolean | null
