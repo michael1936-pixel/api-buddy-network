@@ -45,9 +45,31 @@ export interface EngineResult {
   };
 }
 
+/**
+ * Pre-compute Jerusalem-time session minutes for all candles (call once per candle set).
+ * Replaces the expensive toLocaleString call that was in the hot loop.
+ */
+export function precomputeSessionMinutes(candles: Candle[]): Int16Array {
+  const result = new Int16Array(candles.length);
+  for (let i = 0; i < candles.length; i++) {
+    const tsMs = candles[i].timestamp;
+    // Use manual UTC offset for Asia/Jerusalem (UTC+2 or UTC+3)
+    // Determine DST: Israel DST is roughly last Friday before April 2 → last Sunday before October 31
+    const d = new Date(tsMs);
+    const month = d.getUTCMonth(); // 0-based
+    // Simplified: March-October = UTC+3 (summer), Nov-Feb = UTC+2 (winter)
+    const offsetHours = (month >= 2 && month <= 9) ? 3 : 2;
+    const localMs = tsMs + offsetHours * 3600000;
+    const localDate = new Date(localMs);
+    result[i] = localDate.getUTCHours() * 60 + localDate.getUTCMinutes();
+  }
+  return result;
+}
+
 export function evaluateAllSignals(
   candles: Candle[], i: number, indicators: StrategyIndicators,
-  params: ExtendedStocksStrategyParameters, state: EngineState, lookbacks: EngineLookbacks
+  params: ExtendedStocksStrategyParameters, state: EngineState, lookbacks: EngineLookbacks,
+  sessionMinutes?: Int16Array
 ): EngineResult {
   const { position, lastEntryBarIndex, currentATR, currentEmaTrend } = state;
   const currentCandle = candles[i];
@@ -80,13 +102,19 @@ export function evaluateAllSignals(
   const vixFreezeLeft = 0;
   const vixAboveRange = false;
 
-  const tsMs = currentCandle.timestamp;
-  const dateObj = new Date(tsMs);
-  const jerusalemStr = dateObj.toLocaleString('en-US', { timeZone: 'Asia/Jerusalem', hour12: false });
-  const timeParts = jerusalemStr.split(', ')[1]?.split(':') ?? [];
-  const jHour = parseInt(timeParts[0] ?? '0', 10);
-  const jMin = parseInt(timeParts[1] ?? '0', 10);
-  const totalMinJerusalem = jHour * 60 + jMin;
+  let totalMinJerusalem: number;
+  if (sessionMinutes) {
+    totalMinJerusalem = sessionMinutes[i];
+  } else {
+    // Fallback for non-optimized calls
+    const tsMs = currentCandle.timestamp;
+    const dateObj = new Date(tsMs);
+    const jerusalemStr = dateObj.toLocaleString('en-US', { timeZone: 'Asia/Jerusalem', hour12: false });
+    const timeParts = jerusalemStr.split(', ')[1]?.split(':') ?? [];
+    const jHour = parseInt(timeParts[0] ?? '0', 10);
+    const jMin = parseInt(timeParts[1] ?? '0', 10);
+    totalMinJerusalem = jHour * 60 + jMin;
+  }
   const SESSION_START_MIN = 15 * 60 + 30;
   const SESSION_END_MIN = 23 * 60;
   const inSession = totalMinJerusalem >= SESSION_START_MIN && totalMinJerusalem < SESSION_END_MIN;
