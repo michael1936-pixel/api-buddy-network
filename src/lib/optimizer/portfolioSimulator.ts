@@ -37,7 +37,7 @@ export function buildIndicators(candles: Candle[], params: ExtendedStocksStrateg
   return {
     rsi, ema9, ema21, ema50, ema100, atr, atrAvg, adx,
     bbBasis: bb.basis, bbUpper: bb.upper, bbLower: bb.lower,
-    volumeAvg,
+    volumeAvg, highs, lows,
     s2Adx, s2BbBasis: s2Bb.basis, s2BbUpper: s2Bb.upper, s2BbLower: s2Bb.lower, s2Ema100
   };
 }

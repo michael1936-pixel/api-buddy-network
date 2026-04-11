@@ -21,6 +21,8 @@ export interface StrategyIndicators {
   bbUpper: number[];
   bbLower: number[];
   volumeAvg: number[];
+  highs: number[];
+  lows: number[];
   s2Adx?: number[];
   s2BbBasis?: number[];
   s2BbUpper?: number[];
@@ -256,8 +258,8 @@ export function strategy3_RangeBreakout(
   const close = candles[index].close;
   const prevClose = candles[index - 1].close;
 
-  const highs = candles.map(c => c.high);
-  const lows  = candles.map(c => c.low);
+  const highs = indicators.highs;
+  const lows  = indicators.lows;
 
   const rangeHigh = highest(highs, params.s3_breakout_len, index - 1);
   const rangeLow  = lowest(lows,  params.s3_breakout_len, index - 1);
@@ -366,8 +368,8 @@ export function strategy5_ATRSqueezeBreakout(
   const close         = candles[index].close;
   const prevClose     = candles[index - 1].close;
 
-  const highs = candles.map(c => c.high);
-  const lows  = candles.map(c => c.low);
+  const highs = indicators.highs;
+  const lows  = indicators.lows;
   const atrs  = indicators.atr;
 
   const s5AtrMa = atrs.slice(Math.max(0, atrIdx - params.s5_squeeze_len + 1), atrIdx + 1)

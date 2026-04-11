@@ -23,26 +23,9 @@ export interface EngineLookbacks {
 }
 
 export interface EngineResult {
-  buyS1: boolean; sellS1: boolean;
-  buyS2: boolean; sellS2: boolean;
-  buyS3: boolean; sellS3: boolean;
-  buyS4: boolean; sellS4: boolean;
-  buyS5: boolean; sellS5: boolean;
-  s5RawBuy: boolean; s5RawSell: boolean;
   buyFinal: boolean;
   sellFinal: boolean;
   entryStrategyId: number;
-  barOk: boolean;
-  distFromEmaOk: boolean;
-  s2Debug?: S2DebugInfo;
-  s2Layers?: { shortBase: boolean; longBase: boolean; canEnterShort: boolean; canEnterLong: boolean; };
-  layer3: {
-    position: number; isFlat: boolean; spacingOk: boolean;
-    canFlipToLong: boolean; canFlipToShort: boolean;
-    tradeTimeOk: boolean; vixFreezeLeft: number; vixAboveRange: boolean;
-    barOk: boolean; distFromEmaOk: boolean; simOk: boolean;
-    barsSinceLastEntry: number; minBarsSpacing: number;
-  };
 }
 
 /**
@@ -194,12 +177,5 @@ export function evaluateAllSignals(
   if (buyFinal) entryStrategyId = buyS1 ? 1 : (buyS2 ? 2 : (buyS3 ? 3 : (buyS4 ? 4 : (buyS5 ? 5 : 0))));
   else if (sellFinal) entryStrategyId = sellS1 ? 1 : (sellS2 ? 2 : (sellS3 ? 3 : (sellS4 ? 4 : (sellS5 ? 5 : 0))));
 
-  return {
-    buyS1, sellS1, buyS2, sellS2, buyS3, sellS3, buyS4, sellS4, buyS5, sellS5,
-    s5RawBuy, s5RawSell, buyFinal, sellFinal, entryStrategyId,
-    barOk, distFromEmaOk,
-    s2Debug: s2.debug,
-    s2Layers: canRunS2 ? { shortBase: s2.bb2ShortBase, longBase: s2.bb2LongBase, canEnterShort: s2.bb2CanEnterShort, canEnterLong: s2.bb2CanEnterLong } : undefined,
-    layer3: { position, isFlat, spacingOk, canFlipToLong, canFlipToShort, tradeTimeOk, vixFreezeLeft, vixAboveRange, barOk, distFromEmaOk, simOk, barsSinceLastEntry, minBarsSpacing },
-  };
+  return { buyFinal, sellFinal, entryStrategyId };
 }
