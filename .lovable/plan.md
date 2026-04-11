@@ -1,43 +1,42 @@
 
 
-## תיקון הקפאת הדף — העברת האופטימיזציה ל-Web Worker
+## תיקון מהירות — Indicator Cache + Pre-filter
 
 ### שורש הבעיה
-האופטימיזציה רצה על ה-**main thread** של הדפדפן. כל backtest מחשב אינדיקטורים (RSI, EMA, ATR, ADX, BB) על 12,000+ bars — חישוב כבד שלוקח ~50ms+ לקומבינציה. גם עם yield כל 20 קומבינציות, ה-main thread נחסם לכ-1 שנייה בין yields, מה שגורם לדף להיתקע לגמרי.
+כל קומבינציה (מתוך אלפים):
+1. מסננת 12K candles לפי תאריך — **×2** (train+test)
+2. מחשבת 15 אינדיקטורים על ~6K bars — **×2** (train+test)
+3. רק אז מריצה את ה-backtest עצמו
 
-**בפרויקט השני** (`Real-Time Trading Insights`) זה פתור — שם יש **Web Worker** (`src/workers/optimizer.worker.ts`) שמריץ את כל החישוב ב-thread נפרד. ה-UI חופשי לגמרי.
+סה"כ: ~90% מזמן הריצה הולך על אינדיקטורים + filter, לא על הסימולציה.
 
-### מה ייבנה
+### הפתרון — 2 שינויים ב-Worker בלבד
 
-**1. Web Worker לאופטימיזציה**
-- קובץ חדש `src/workers/optimizer.worker.ts`
-- מקבל `init` עם candles + config + fixedParams
-- מקבל `process` ומריץ את כל הקומבינציות ב-thread נפרד
-- שולח `progress` updates כל ~50 קומבינציות
-- שולח `results_batch` עם תוצאות
-- שולח `complete` בסיום
-- lazy generator לקומבינציות (ללא memory spike)
+**1. Pre-filter candles פעם אחת (ב-init)**
+ב-`optimizer.worker.ts`, ברגע שמקבלים `init` עם periodSplit — מסננים train/test candles ושומרים. לא צריך לסנן שוב.
 
-**2. עדכון portfolioOptimizer.ts**
-- פונקציה חדשה `optimizeWithWorker()` שמתקשרת עם ה-Worker
-- ה-Worker מייצר קומבינציות ומריץ backtests בעצמו
-- ה-main thread רק מקבל progress ו-results דרך `postMessage`
+**2. Indicator cache לפי hash**
+מתוך ~80 פרמטרים, רק 14 משפיעים על `buildIndicators`:
+```
+s1_rsi_len, s1_ema_fast_len, s1_ema_mid_len, s1_ema_trend_len,
+s1_atr_len, s1_atr_ma_len, s1_adx_len, s1_bb_len, s1_bb_mult, s1_vol_len,
+bb2_adx_len, bb2_bb_len, bb2_bb_mult, bb2_ma_len
+```
 
-**3. העתקת התצוגה מהפרויקט השני (1:1)**
-- קובץ `OptimizationProgress.tsx` — העתקה ישירה של 674 השורות מ-`SmartOptimizationProgress.tsx` של הפרויקט השני
-- כולל: 3 סיבובים צבעוניים, checkboxes, Legend, current/best results עם Zap, progress bars כפולים, מהירות ו-ETA
+נבנה hash מ-14 הערכים האלה. אם ה-hash זהה לקומבינציה קודמת — משתמשים באינדיקטורים שכבר חושבו. אם שונה — מחשבים ושומרים ב-cache.
 
-### קבצים שישתנו
+**שינויים:**
 
 | קובץ | שינוי |
 |-------|-------|
-| `src/workers/optimizer.worker.ts` | **חדש** — Worker שמריץ backtests מחוץ ל-main thread |
-| `src/lib/optimizer/portfolioOptimizer.ts` | הוספת `optimizeWithWorker()` שמתקשר עם ה-Worker |
-| `src/components/backtest/OptimizationProgress.tsx` | **שכתוב** — העתקה 1:1 מהפרויקט השני |
-| `src/pages/Backtest.tsx` | שימוש ב-Worker במקום חישוב ישיר על main thread |
+| `src/lib/optimizer/portfolioSimulator.ts` | ייצוא `buildIndicators` + פונקציה חדשה `runSingleBacktestWithIndicators(candles, indicators, params)` שמדלגת על חישוב אינדיקטורים |
+| `src/workers/optimizer.worker.ts` | pre-filter candles ב-init + indicator cache עם Map לפי hash של 14 פרמטרים |
+
+### למה לא להוריד אינדיקטורים מהשרת?
+כי האינדיקטורים תלויים בפרמטרים שמשתנים בין קומבינציות (כמו `s1_rsi_len=10` vs `s1_rsi_len=14`). אי אפשר לחשב מראש את כל הווריאציות. ה-cache פותר את זה — מחשב פעם אחת per unique indicator combo (~100-500 ייחודיים מתוך אלפי קומבינציות).
 
 ### תוצאה צפויה
-- הדף **לא ייתקע** — כל החישוב רץ ב-thread נפרד
-- מהירות ~300 קומב׳/שניה (כמו בפרויקט השני)
-- תצוגה זהה 1:1 לפרויקט השני
+- שיפור ×50-200 — מ-0.3 ל-~60-300 קומב׳/שניה
+- אותה תוצאה מתמטית בדיוק
+- הדף נשאר רספונסיבי (כבר ב-Worker)
 
