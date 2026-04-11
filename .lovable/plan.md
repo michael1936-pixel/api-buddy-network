@@ -1,44 +1,69 @@
 
 
-## הוספת IB Gateway (Paper) על Railway — צעד צעד
+## מנוע אופטימיזציה אוטומטי — לחיצה על מניה מפעילה הכל
 
-### מצב נוכחי
-- יש לך שרת Railway פעיל בדומיין `selfless-kindness-production-0003.up.railway.app`
-- צריך להוסיף service חדש של IB Gateway (Docker) — לא מצאת את כפתור + New
+### הרעיון
+המשתמש לוחץ על מניה בגריד → הסוכנים מריצים לבד את כל התהליך:
+1. הורדת נתונים (market_data מה-DB)
+2. חלוקה אוטומטית ל-train/test (70/30)
+3. הרצת SmartOptimizer עם preset config (21 שלבים × 3 סבבים)
+4. שמירת תוצאות ל-optimization_results
+5. עדכון הגריד בזמן אמת
 
-### שלב 1: מציאת כפתור + New ב-Railway
-1. היכנס ל-Railway dashboard: https://railway.com/dashboard
-2. לחץ על **שם הפרויקט** (לא על service ספציפי)
-3. ברגע שאתה רואה את כל ה-services שלך בתצוגת פרויקט — תמצא כפתור **+ New** או **+ Add Service** בפינה הימנית/שמאלית העליונה
-4. בחר **Docker Image** והכנס: `ghcr.io/gnzsnz/ib-gateway:latest`
+### מה קיים ומה חסר
 
-### שלב 2: הגדרת Variables ל-IB Gateway service
-```
-TWS_USERID=שם_משתמש_IBKR_שלך
-TWS_PASSWORD=סיסמה_של_IBKR
-TRADING_MODE=paper
-READ_ONLY_API=yes
-```
+**קיים ועובד:**
+- `smartOptimizer.ts` — 368 שורות, 7 שלבים × 3 סבבים, מנגנון שלם
+- `strategies.ts` — 5 אסטרטגיות (EMA Trend, Bollinger, Breakout, Inside Bar, ATR Squeeze)
+- `indicators.ts` — RSI, EMA, ATR, ADX, Bollinger Bands
+- `strategyEngine.ts` — מנוע סימולציה עם כל הלוגיקה
+- `presetConfigs.ts` — NNE preset מוכן
+- `types.ts` — כל הטיפוסים
 
-**חשוב**: בפעם הראשונה IB Gateway ידרוש אישור 2FA מאפליקציית IBKR בטלפון.
+**Stubs שצריך לממש:**
+- `portfolioOptimizer.ts` — stub, צריך לממש backtest אמיתי עם `strategyEngine`
+- `portfolioSimulator.ts` — stub, צריך לממש סימולטור פורטפוליו
 
-### שלב 3: בפרויקט Lovable — הגדרת VITE_RAILWAY_WS_URL
-אחרי שה-service רץ, נגדיר ב-Lovable את ה-URL של ה-WebSocket:
-```
-VITE_RAILWAY_WS_URL=wss://selfless-kindness-production-0003.up.railway.app/ws/market
-```
+**חסר לגמרי:**
+- Click handler על מניה בגריד
+- קומפוננטת Progress עם שלבי אופטימיזציה
+- שמירת תוצאות ל-DB אחרי סיום
 
-### שלב 4: בניית market-stream endpoint על Railway
-צריך להוסיף לשרת Railway שלך endpoint `/ws/market` שמתחבר ל-IB Gateway ומשדר ticks לדשבורד. זה קוד Node.js שירוץ על אותו שרת Railway או כ-service נפרד.
+### שלבי מימוש
 
-### מה אבנה בפרויקט הזה (Lovable)
-- שום דבר כרגע — הצד של הלקוח (React) כבר מוכן מהשלב הקודם
-- `useMarketDataWebSocket.ts` כבר יודע להתחבר ל-`VITE_RAILWAY_WS_URL`
-- `marketDataStore.ts` כבר תומך ב-RAF batching
+**שלב 1: מימוש portfolioSimulator.ts**
+- לקחת candles מה-DB לפי סימול
+- להריץ `evaluateAllSignals` + trade management loop
+- להחזיר `BacktestResult` עם trades, return, drawdown, win rate
 
-### סיכום הצעדים
-1. **אתה**: מצא + New ב-Railway, הוסף IB Gateway Docker service
-2. **אתה**: הגדר variables (credentials + paper mode)
-3. **אני**: אעזור לבנות את ה-market-stream endpoint על Railway
-4. **אני**: אגדיר את ה-VITE_RAILWAY_WS_URL בפרויקט
+**שלב 2: מימוש portfolioOptimizer.ts**
+- grid search על פרמטרים לפי config ranges
+- הרצת portfolioSimulator לכל קומבינציה
+- החזרת `MultiObjectiveResult` עם best params
+
+**שלב 3: עדכון Backtest.tsx**
+- לחיצה על מניה → פותח dialog של התקדמות
+- טוען נתונים מ-`market_data` table לפי סימול
+- מחלק אוטומטית ל-70% train / 30% test
+- מריץ `runSmartOptimization` עם preset config
+- Progress bar עם שם שלב נוכחי + אחוזים
+- כפתור ביטול
+
+**שלב 4: שמירת תוצאות**
+- בסיום: insert ל-`optimization_results` עם כל המטריקות
+- עדכון הגריד אוטומטית (React Query invalidation)
+
+### קבצים שישתנו
+| קובץ | שינוי |
+|-------|-------|
+| `src/lib/optimizer/portfolioSimulator.ts` | מימוש מלא — backtest engine |
+| `src/lib/optimizer/portfolioOptimizer.ts` | מימוש מלא — grid search |
+| `src/pages/Backtest.tsx` | click handler + optimization dialog |
+| `src/components/backtest/OptimizationProgress.tsx` | חדש — progress UI |
+
+### הערות טכניות
+- האופטימיזציה רצה בדפדפן (client-side) — מתאים למניה בודדת
+- לסריקת 420 מניות צריך את שרת Railway
+- נשתמש ב-`requestAnimationFrame` batching כדי לא לתקוע את ה-UI
+- `AbortController` לביטול
 
