@@ -1,94 +1,44 @@
 
-כן — אם אתה רוצה תצוגה כמו ברוקר, צריך להחליף גם ספק וגם ארכיטקטורה. עם המימוש הנוכחי זה בלתי אפשרי, כי:
-- `fetch-market-data` משתמש ב-`time_series` של דקה => candles, לא ticks
-- `useMarketDataLive` עושה polling כל 15s => לא realtime
-- `VIX` מגיע מ-DB / `VIXY proxy` => לא VIX חי ואמיתי
-- `MarketDataProvider` מבוסס Context => כל tick מרנדר עץ React שלם, לא מתאים ל-high frequency
 
-## ההמלצה
-המסלול הנכון הוא:
-1. מקור live ראשי = feed של ברוקר/ספק מקצועי עם streaming אמיתי
-2. `VIX` = feed רשמי שכולל CBOE VIX real-time
-3. Railway = שכבת stream קבועה
-4. React = רק צרכן של stream פנימי, לא מתחבר ישירות לספק
+## הוספת IB Gateway (Paper) על Railway — צעד צעד
 
-אם כבר יש לך subscriptions ב-Interactive Brokers — זה המסלול המועדף.
-אם לא — צריך ספק בתשלום שתומך גם US equities real-time וגם VIX/CBOE real-time.
-בלי entitlement אמיתי ל-VIX, אי אפשר לתת VIX חי “כמו ברוקר”.
+### מצב נוכחי
+- יש לך שרת Railway פעיל בדומיין `selfless-kindness-production-0003.up.railway.app`
+- צריך להוסיף service חדש של IB Gateway (Docker) — לא מצאת את כפתור + New
 
-## מה אבנה
-### 1. להוציא את ה-live path מה-polling
-- לבטל את `fetch-market-data` כמקור live
-- להשאיר REST רק ל-snapshot/fallback
-- להסיר את `VIXY -> VIX` proxy מהמסלול החי
+### שלב 1: מציאת כפתור + New ב-Railway
+1. היכנס ל-Railway dashboard: https://railway.com/dashboard
+2. לחץ על **שם הפרויקט** (לא על service ספציפי)
+3. ברגע שאתה רואה את כל ה-services שלך בתצוגת פרויקט — תמצא כפתור **+ New** או **+ Add Service** בפינה הימנית/שמאלית העליונה
+4. בחר **Docker Image** והכנס: `ghcr.io/gnzsnz/ib-gateway:latest`
 
-### 2. לבנות stream קבוע דרך Railway
-- חיבור persistent לספק הנתונים
-- subscribe/unsubscribe לפי symbols
-- נרמול ticks לפורמט אחיד
-- WebSocket פנימי אחד לדשבורד
-
-### 3. לשכתב את שכבת ה-client ל-high frequency
-- להחליף את `MarketDataContext`/`useState` ב-store חיצוני עם subscription לפי symbol
-- batching עם `requestAnimationFrame`
-- לא לרנדר את כל האפליקציה על כל tick
-
-### 4. VIX אמיתי בלבד
-- לא יותר DB freshness כתחליף ל-live
-- לא יותר `VIXY proxy`
-- אם feed VIX לא זמין: להציג `feed unavailable` ולא נתון מטעה
-
-### 5. תמיכה במניות מרובות
-- לא hardcoded ל-`SPY,VIX,VIXY`
-- מנגנון subscribe דינמי לפי watchlist / מסכים פעילים
-
-## קבצים שיתעדכנו בריפו הזה
-- `src/hooks/useMarketDataWebSocket.ts` — מעבר ל-stream פנימי במקום Twelve Data
-- `src/contexts/MarketDataContext.tsx` — החלפה/צמצום לטובת store מהיר
-- `src/hooks/use-trading-data.ts` — REST כ-snapshot בלבד
-- `src/pages/News.tsx` — צריכת ticks חיים + source/latency
-- `src/components/AppLayout.tsx` — top bar חי בלי polling מטעה
-- `supabase/functions/get-ws-token/index.ts` — טוקן גישה פנימי ל-stream או הסרה
-- `supabase/functions/fetch-market-data/index.ts` — snapshot בלבד
-
-## עבודה שנדרשת מחוץ לריפו הזה
-הקוד של שרת Railway לא נמצא כאן, אבל הוא הכרחי לפתרון:
-- market stream service קבוע
-- חיבור לברוקר/ספק
-- fan-out ללקוחות
-- optional: שמירת 1s/1m aggregates ל-history, לא כל tick
-
-## פרטים טכניים
-```text
-Broker / market-data feed
-        ↓
-Railway market-stream service
-        ↓
-normalized internal WebSocket
-        ↓
-client-side market store
-        ↓
-News / top bar / שאר המסכים
+### שלב 2: הגדרת Variables ל-IB Gateway service
+```
+TWS_USERID=שם_משתמש_IBKR_שלך
+TWS_PASSWORD=סיסמה_של_IBKR
+TRADING_MODE=paper
+READ_ONLY_API=yes
 ```
 
-פורמט tick מומלץ:
-```text
-symbol, last, bid, ask, size, exchange_ts, received_at, provider, sequence
+**חשוב**: בפעם הראשונה IB Gateway ידרוש אישור 2FA מאפליקציית IBKR בטלפון.
+
+### שלב 3: בפרויקט Lovable — הגדרת VITE_RAILWAY_WS_URL
+אחרי שה-service רץ, נגדיר ב-Lovable את ה-URL של ה-WebSocket:
+```
+VITE_RAILWAY_WS_URL=wss://selfless-kindness-production-0003.up.railway.app/ws/market
 ```
 
-מגבלה חשובה:
-- feed יכול להיות מהיר מאוד
-- אבל ה-UI יצויר לפי קצב המסך (בד"כ 60Hz/120Hz), אז המטרה היא broker-like smooth streaming — לא polling ולא candles
+### שלב 4: בניית market-stream endpoint על Railway
+צריך להוסיף לשרת Railway שלך endpoint `/ws/market` שמתחבר ל-IB Gateway ומשדר ticks לדשבורד. זה קוד Node.js שירוץ על אותו שרת Railway או כ-service נפרד.
 
-## תוצאה צפויה
-- מניות יתעדכנו tick-by-tick
-- VIX יהיה חי רק אם יש entitlement רשמי מתאים
-- לא יהיה יותר delay של דקות
-- אם אין feed מתאים, נדע שזה חסם ספק/רישוי — לא באג React
+### מה אבנה בפרויקט הזה (Lovable)
+- שום דבר כרגע — הצד של הלקוח (React) כבר מוכן מהשלב הקודם
+- `useMarketDataWebSocket.ts` כבר יודע להתחבר ל-`VITE_RAILWAY_WS_URL`
+- `marketDataStore.ts` כבר תומך ב-RAF batching
 
-## תנאי לביצוע
-כדי לממש את זה באמת צריך אחד מאלה:
-- גישה ל-Interactive Brokers / feed של הברוקר עם market data subscriptions
-- או ספק חדש בתשלום עם real-time equities + official VIX
+### סיכום הצעדים
+1. **אתה**: מצא + New ב-Railway, הוסף IB Gateway Docker service
+2. **אתה**: הגדר variables (credentials + paper mode)
+3. **אני**: אעזור לבנות את ה-market-stream endpoint על Railway
+4. **אני**: אגדיר את ה-VITE_RAILWAY_WS_URL בפרויקט
 
-זה הכיוון הנכון אם הדרישה היא “כמו ברוקר”, ולא “REST מהיר יותר”.
