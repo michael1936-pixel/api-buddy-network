@@ -15,8 +15,9 @@ export interface OptimizationProgressInfo {
 }
 
 const COMBINATION_PRECISION = 1000;
+const YIELD_EVERY_N = 20;
 const now = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
-const sleepToPaint = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
+const yieldToUI = () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
 
 function getParameterRanges(config: ExtendedStocksOptimizationConfig): { name: string; range: ParameterRange }[] {
   const ranges: { name: string; range: ParameterRange }[] = [];

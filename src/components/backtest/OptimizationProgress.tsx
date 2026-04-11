@@ -1,11 +1,12 @@
 import React, { useMemo } from 'react';
-import { Card } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import { Checkbox } from "@/components/ui/checkbox";
+import { Card } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
+import { Checkbox } from '@/components/ui/checkbox';
 import { 
   Brain, Clock, CheckCircle2, Circle, Loader2, SkipForward, Square,
-  Zap, ChevronDown, ChevronUp, Target, Flame, BarChart3, Play
+  TrendingUp, TrendingDown, Zap, ChevronDown, ChevronUp, Target, 
+  Flame, BarChart3, Play
 } from 'lucide-react';
 import type { StageStatus, StageResult, SmartOptimizationProgress as ProgressInfo } from '@/lib/optimizer/smartOptimizer';
 
@@ -40,6 +41,8 @@ interface SmartOptimizationProgressProps {
   enabledStages: boolean[];
   onStageToggle: (stageIndex: number, enabled: boolean) => void;
   stageProgress?: { [stageNumber: number]: { current: number; total: number } };
+  preRunMode?: boolean;
+  onRoundToggle?: (round: number, enabled: boolean) => void;
   overallCombinations?: { current: number; total: number };
   combinationsPerSecond?: number;
   symbol?: string;
@@ -67,23 +70,24 @@ interface RoundInfo {
   color: string;
   bgColor: string;
   borderColor: string;
+  progressColor: string;
 }
 
 const getRoundInfo = (roundNumber: 1 | 2 | 3): RoundInfo => {
   switch (roundNumber) {
     case 1:
-      return { round: 1, label: 'אסטרטגיות בודדות', color: 'text-blue-400', bgColor: 'bg-blue-500/10', borderColor: 'border-blue-500/30' };
+      return { round: 1, label: 'אסטרטגיות בודדות', color: 'text-blue-400', bgColor: 'bg-blue-500/10', borderColor: 'border-blue-500/30', progressColor: 'bg-blue-500' };
     case 2:
-      return { round: 2, label: 'דיוק ראשוני', color: 'text-amber-400', bgColor: 'bg-amber-500/10', borderColor: 'border-amber-500/30' };
+      return { round: 2, label: 'דיוק ראשוני', color: 'text-amber-400', bgColor: 'bg-amber-500/10', borderColor: 'border-amber-500/30', progressColor: 'bg-amber-500' };
     case 3:
-      return { round: 3, label: 'מיקרו דיוק', color: 'text-emerald-400', bgColor: 'bg-emerald-500/10', borderColor: 'border-emerald-500/30' };
+      return { round: 3, label: 'מיקרו דיוק', color: 'text-emerald-400', bgColor: 'bg-emerald-500/10', borderColor: 'border-emerald-500/30', progressColor: 'bg-emerald-500' };
   }
 };
 
-const getRoundLabel = (stageNumber: number): { round: 1 | 2 | 3 } => {
-  if (stageNumber <= STAGES_PER_ROUND) return { round: 1 };
-  if (stageNumber <= STAGES_PER_ROUND * 2) return { round: 2 };
-  return { round: 3 };
+const getRoundLabel = (stageNumber: number): { round: 1 | 2 | 3; badgeColor: string } => {
+  if (stageNumber <= STAGES_PER_ROUND) return { round: 1, badgeColor: 'bg-blue-500' };
+  if (stageNumber <= STAGES_PER_ROUND * 2) return { round: 2, badgeColor: 'bg-amber-500' };
+  return { round: 3, badgeColor: 'bg-emerald-500' };
 };
 
 const StageRow: React.FC<{
@@ -94,7 +98,8 @@ const StageRow: React.FC<{
   onToggle: (enabled: boolean) => void;
   stageProgress?: { current: number; total: number };
   displayNumber: number;
-}> = ({ stage, result, isCurrent, enabled, onToggle, stageProgress, displayNumber }) => {
+  combinationsEstimate?: number;
+}> = ({ stage, result, isCurrent, enabled, onToggle, stageProgress, displayNumber, combinationsEstimate }) => {
   const canToggle = stage.status === 'pending';
 
   const StatusIcon = () => {
@@ -127,6 +132,10 @@ const StageRow: React.FC<{
         <span className="text-xs text-muted-foreground font-mono">
           {formatNumber(stageProgress.current)} / {formatNumber(stageProgress.total)}
         </span>
+      ) : combinationsEstimate ? (
+        <span className="text-xs text-muted-foreground font-mono">
+          {formatNumber(combinationsEstimate)} קומבינציות
+        </span>
       ) : null}
       {result && (
         <div className="flex items-center gap-2 text-xs">
@@ -142,7 +151,7 @@ const StageRow: React.FC<{
   );
 };
 
-const RoundSection: React.FC<{
+interface RoundSectionProps {
   roundNumber: 1 | 2 | 3;
   stages: StageStatus[];
   stageResults: StageResult[];
@@ -151,7 +160,11 @@ const RoundSection: React.FC<{
   currentStage: number;
   stageProgressMap?: { [stageNumber: number]: { current: number; total: number } };
   startIndex: number;
-}> = ({ roundNumber, stages, stageResults, enabledStages, onStageToggle, currentStage, stageProgressMap, startIndex }) => {
+}
+
+const RoundSection: React.FC<RoundSectionProps> = ({
+  roundNumber, stages, stageResults, enabledStages, onStageToggle, currentStage, stageProgressMap, startIndex
+}) => {
   const roundInfo = getRoundInfo(roundNumber);
   const [isExpanded, setIsExpanded] = React.useState(roundNumber === 1);
   const roundStages = stages.slice(startIndex, startIndex + STAGES_PER_ROUND);
@@ -224,7 +237,8 @@ const RoundSection: React.FC<{
 export const SmartOptimizationProgressCard: React.FC<SmartOptimizationProgressProps> = ({
   stages, currentStage, totalStages, progress, stageResults,
   onSkipStage, onStop, elapsedTime, isRunning, enabledStages, onStageToggle,
-  stageProgress: stageProgressMap, overallCombinations, combinationsPerSecond, symbol
+  stageProgress: stageProgressMap, preRunMode = false, overallCombinations, 
+  combinationsPerSecond, symbol
 }) => {
   const overallProgress = useMemo(() => {
     const enabledCount = enabledStages.filter(Boolean).length;
@@ -244,13 +258,18 @@ export const SmartOptimizationProgressCard: React.FC<SmartOptimizationProgressPr
     return stageResults.reduce((best, current) => current.bestReturn > best.bestReturn ? current : best, stageResults[0]);
   }, [stageResults]);
 
+  const currentStageResult = useMemo(() => {
+    return stageResults.find(r => r.stageNumber === currentStage);
+  }, [stageResults, currentStage]);
+
   const currentRoundInfo = useMemo(() => {
     const { round } = getRoundLabel(currentStage);
     return getRoundInfo(round);
   }, [currentStage]);
 
   const enabledStagesCount = useMemo(() => {
-    return enabledStages.filter(Boolean).length || stages.length;
+    if (enabledStages.length === 0) return stages.length;
+    return enabledStages.filter(Boolean).length;
   }, [enabledStages, stages.length]);
 
   const currentStageName = useMemo(() => {
@@ -278,7 +297,7 @@ export const SmartOptimizationProgressCard: React.FC<SmartOptimizationProgressPr
   return (
     <Card className="border-2 border-primary/40 bg-gradient-to-br from-slate-900/80 to-slate-800/80 overflow-hidden">
       {/* Stop Button */}
-      {isRunning && (
+      {isRunning && !preRunMode && (
         <div className="p-4 border-b border-primary/20">
           <Button
             variant="destructive"
@@ -300,14 +319,14 @@ export const SmartOptimizationProgressCard: React.FC<SmartOptimizationProgressPr
             <span className="text-sm font-mono">{formatTime(elapsedTime)}</span>
           </div>
           <div className="flex items-center gap-3">
-            {isRunning && <div className="w-3 h-3 rounded-full bg-emerald-500 animate-pulse" />}
+            <div className="w-3 h-3 rounded-full bg-emerald-500 animate-pulse" />
             <span className={`font-bold text-lg ${currentRoundInfo.color}`}>
-              {symbol ? `${symbol} — ` : ''}סיבוב {currentRoundInfo.round} | שלב {stageInRound}/7
+              {symbol ? `${symbol} — ` : ''}אופטימיזציה חכמה - סיבוב {currentRoundInfo.round} | שלב {stageInRound} מתוך 7
             </span>
             <Brain className="w-6 h-6 text-primary" />
           </div>
         </div>
-        {progress && (
+        {!preRunMode && progress && (
           <p className="text-muted-foreground text-sm text-right mt-2">
             {currentStageName} - {progress.stageDescription}
           </p>
@@ -315,7 +334,7 @@ export const SmartOptimizationProgressCard: React.FC<SmartOptimizationProgressPr
       </div>
 
       {/* Statistics Boxes */}
-      {isRunning && (
+      {!preRunMode && (
         <div className="p-4 grid grid-cols-2 gap-4 border-b border-primary/20">
           <div className="bg-slate-800/70 rounded-xl p-4 border border-white/10">
             <div className="flex items-center gap-2 mb-3 justify-end">
@@ -324,22 +343,39 @@ export const SmartOptimizationProgressCard: React.FC<SmartOptimizationProgressPr
             </div>
             <div className="text-right space-y-1">
               <p className="text-2xl font-bold text-emerald-400 font-mono">
-                {overallCombinations ? <>{formatNumber(overallCombinations.current)} / {formatNumber(overallCombinations.total)}</> : <>{stageResults.length} / {enabledStagesCount}</>}
+                {overallCombinations ? (
+                  <>{formatNumber(overallCombinations.current)} / {formatNumber(overallCombinations.total)}</>
+                ) : (
+                  <>{stageResults.length} / {enabledStagesCount}</>
+                )}
               </p>
-              <p className="text-xs text-muted-foreground">{overallProgress.toFixed(1)}% מכלל האופטימיזציה</p>
+              <p className="text-xs text-muted-foreground">
+                {overallProgress.toFixed(1)}% מכלל האופטימיזציה
+              </p>
+              <p className="text-xs text-muted-foreground">
+                זמן שלב: {formatTime(elapsedTime)}
+              </p>
             </div>
           </div>
           <div className="bg-slate-800/70 rounded-xl p-4 border border-white/10">
             <div className="flex items-center gap-2 mb-3 justify-end">
-              <h4 className="font-semibold text-white">שלב נוכחי</h4>
+              <h4 className="font-semibold text-white">התקדמות שלב נוכחי</h4>
               <Flame className="w-4 h-4 text-purple-400" />
             </div>
             <div className="text-right space-y-1">
               <p className="text-2xl font-bold text-purple-400 font-mono">
-                {progress ? <>{formatNumber(progress.current)} / {formatNumber(progress.total)}</> : '0 / 0'}
+                {progress ? (
+                  <>{formatNumber(progress.current)} / {formatNumber(progress.total)}</>
+                ) : '0 / 0'}
               </p>
-              <p className="text-xs text-muted-foreground">{stageProgressPct.toFixed(1)}%</p>
-              {estimatedTimeRemaining && <p className="text-xs text-muted-foreground">משוער: {formatTime(estimatedTimeRemaining)}</p>}
+              <p className="text-xs text-muted-foreground">
+                {stageProgressPct.toFixed(1)}% ({progress ? formatNumber(progress.total) : 0} קומבינציות)
+              </p>
+              {estimatedTimeRemaining && (
+                <p className="text-xs text-muted-foreground">
+                  משוער זמן: {formatTime(estimatedTimeRemaining)}
+                </p>
+              )}
             </div>
           </div>
         </div>
@@ -359,12 +395,12 @@ export const SmartOptimizationProgressCard: React.FC<SmartOptimizationProgressPr
       </div>
 
       {/* Progress Bars */}
-      {isRunning && (
+      {!preRunMode && (
         <div className="p-4 space-y-4 border-t border-primary/20">
           <div>
             <div className="flex items-center justify-between mb-2">
               <span className="text-sm text-muted-foreground">
-                {overallCombinations ? formatNumber(overallCombinations.current) : stageResults.length} / {overallCombinations ? formatNumber(overallCombinations.total) : enabledStagesCount} ({overallProgress.toFixed(1)}%)
+                {overallCombinations ? formatNumber(overallCombinations.current) : stageResults.length} / {overallCombinations ? formatNumber(overallCombinations.total) : enabledStagesCount} קומבינציות ({overallProgress.toFixed(1)}%)
               </span>
               <div className="flex items-center gap-2">
                 <span className="text-sm font-medium text-emerald-400">התקדמות כללית</span>
@@ -389,39 +425,90 @@ export const SmartOptimizationProgressCard: React.FC<SmartOptimizationProgressPr
               <div className="h-full bg-gradient-to-r from-purple-600 to-purple-400 transition-all duration-300" style={{ width: `${stageProgressPct}%` }} />
             </div>
             <div className="flex items-center justify-between mt-2 text-xs text-muted-foreground">
-              <span>מהירות: {speed.toFixed(1)} קומב׳/שניה</span>
-              {estimatedTimeRemaining && <span>משוער: {formatTime(estimatedTimeRemaining)}</span>}
+              <span>מהירות: {speed.toFixed(1)} קומבינציות/שניה</span>
+              {estimatedTimeRemaining && (
+                <span>זמן משוער: {formatTime(estimatedTimeRemaining)} דקות</span>
+              )}
             </div>
           </div>
-          <Button variant="outline" size="sm" onClick={onSkipStage} className="w-full gap-2">
-            <SkipForward className="w-4 h-4" />
-            דלג לשלב הבא
-          </Button>
+          {isRunning && (
+            <Button variant="outline" size="sm" onClick={onSkipStage} className="w-full gap-2">
+              <SkipForward className="w-4 h-4" />
+              דלג לשלב הבא
+            </Button>
+          )}
         </div>
       )}
 
       {/* Best Results */}
-      {bestOverallResult && (
+      {!preRunMode && (bestOverallResult || currentStageResult) && (
         <div className="p-4 border-t border-primary/20">
-          <div className="bg-slate-800/70 rounded-xl p-4 border border-white/10">
-            <div className="flex items-center gap-2 mb-2 justify-end">
-              <h4 className="text-sm font-medium text-white">הטוב ביותר כללי:</h4>
-              <Zap className="w-4 h-4 text-amber-400" />
-            </div>
-            <div className="space-y-1">
-              <div className="flex items-center justify-between">
-                <span className="text-emerald-400 font-bold text-lg">
-                  {bestOverallResult.bestReturn > 0 ? '+' : ''}{bestOverallResult.bestReturn.toFixed(2)}%
-                </span>
-                <span className="text-muted-foreground text-sm">Train:</span>
+          <div className="bg-slate-800/70 rounded-xl p-4 border border-white/10 space-y-4">
+            {currentStageResult && (
+              <div>
+                <div className="flex items-center gap-2 mb-2 justify-end">
+                  <h4 className="text-sm font-medium text-white">שלב נוכחי:</h4>
+                </div>
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-4">
+                    <span className="text-emerald-400 font-bold">
+                      Train: {currentStageResult.bestReturn > 0 ? '+' : ''}{currentStageResult.bestReturn.toFixed(2)}%
+                    </span>
+                    <span className="text-blue-400 font-bold">
+                      Test: {currentStageResult.bestTestReturn > 0 ? '+' : ''}{currentStageResult.bestTestReturn.toFixed(2)}%
+                    </span>
+                  </div>
+                  <span className="text-muted-foreground text-sm">התרכובת הטובה ביותר:</span>
+                </div>
               </div>
-              <div className="flex items-center justify-between">
-                <span className="text-blue-400 font-bold text-lg">
-                  {bestOverallResult.bestTestReturn > 0 ? '+' : ''}{bestOverallResult.bestTestReturn.toFixed(2)}%
-                </span>
-                <span className="text-muted-foreground text-sm">Test:</span>
+            )}
+            {currentStageResult && bestOverallResult && (
+              <div className="border-t border-white/10" />
+            )}
+            {bestOverallResult && (
+              <div>
+                <div className="flex items-center gap-2 mb-2 justify-end">
+                  <h4 className="text-sm font-medium text-white">הטוב ביותר כללי:</h4>
+                  <Zap className="w-4 h-4 text-amber-400" />
+                </div>
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between">
+                    <span className="text-emerald-400 font-bold text-lg">
+                      {bestOverallResult.bestReturn > 0 ? '+' : ''}{bestOverallResult.bestReturn.toFixed(2)}%
+                    </span>
+                    <span className="text-muted-foreground text-sm">התרכובת הטובה ביותר (Train):</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-blue-400 font-bold text-lg">
+                      {bestOverallResult.bestTestReturn > 0 ? '+' : ''}{bestOverallResult.bestTestReturn.toFixed(2)}%
+                    </span>
+                    <span className="text-muted-foreground text-sm">הבדיקה הטובה ביותר (Test):</span>
+                  </div>
+                </div>
               </div>
-            </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Legend */}
+      {preRunMode && (
+        <div className="p-4 border-t border-primary/20 flex items-center justify-center gap-6 text-xs text-muted-foreground">
+          <div className="flex items-center gap-1">
+            <TrendingUp className="w-3 h-3 text-emerald-400" />
+            <span>Train</span>
+          </div>
+          <div className="flex items-center gap-1">
+            <TrendingDown className="w-3 h-3 text-blue-400" />
+            <span>Test</span>
+          </div>
+          <div className="flex items-center gap-1">
+            <CheckCircle2 className="w-3 h-3 text-emerald-400" />
+            <span>הושלם</span>
+          </div>
+          <div className="flex items-center gap-1">
+            <SkipForward className="w-3 h-3 text-muted-foreground" />
+            <span>הושבת</span>
           </div>
         </div>
       )}
