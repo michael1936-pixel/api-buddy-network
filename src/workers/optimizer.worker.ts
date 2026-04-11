@@ -10,6 +10,7 @@ import type {
 } from '../lib/optimizer/types';
 import { StrategyIndicators } from '../lib/optimizer/strategies';
 import { buildIndicators, runSingleBacktestWithIndicators, calculateMonthlyPerformance } from '../lib/optimizer/portfolioSimulator';
+import { precomputeSessionMinutes } from '../lib/optimizer/strategyEngine';
 
 const INITIAL_CAPITAL = 100_000;
 
@@ -35,6 +36,8 @@ interface PreFilteredSymbol {
   symbol: string;
   trainCandles: Candle[];
   testCandles: Candle[];
+  trainSessionMinutes: Int16Array;
+  testSessionMinutes: Int16Array;
 }
 let prefilteredSymbols: PreFilteredSymbol[] = [];
 
@@ -122,8 +125,8 @@ function runCachedPortfolioBacktest(
     const pf = prefilteredSymbols[i];
     const ci = cachedIndicators[i];
 
-    const trainResult = runSingleBacktestWithIndicators(pf.trainCandles, params, ci.train);
-    const testResult = runSingleBacktestWithIndicators(pf.testCandles, params, ci.test);
+    const trainResult = runSingleBacktestWithIndicators(pf.trainCandles, params, ci.train, pf.trainSessionMinutes);
+    const testResult = runSingleBacktestWithIndicators(pf.testCandles, params, ci.test, pf.testSessionMinutes);
 
     trainResults.push({ symbol: pf.symbol, result: trainResult, capitalAllocated: INITIAL_CAPITAL, contributionToTotal: trainResult.totalReturn });
     testResults.push({ symbol: pf.symbol, result: testResult, capitalAllocated: INITIAL_CAPITAL, contributionToTotal: testResult.totalReturn });
@@ -169,7 +172,9 @@ self.onmessage = (e: MessageEvent) => {
           if (t >= trainStart && t <= trainEnd) trainCandles.push(c);
           if (t >= testStart && t <= testEnd) testCandles.push(c);
         }
-        return { symbol: sd.symbol, trainCandles, testCandles };
+        const trainSessionMinutes = precomputeSessionMinutes(trainCandles);
+        const testSessionMinutes = precomputeSessionMinutes(testCandles);
+        return { symbol: sd.symbol, trainCandles, testCandles, trainSessionMinutes, testSessionMinutes };
       });
 
       // Clear indicator cache for new run

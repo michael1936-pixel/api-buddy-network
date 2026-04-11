@@ -2,7 +2,7 @@ import type {
   Candle, SymbolData, PeriodSplit, ExtendedStocksStrategyParameters,
   BacktestResult, Trade, PortfolioBacktestResult, MonthlyPerformance
 } from './types';
-import { evaluateAllSignals, EngineState, EngineLookbacks } from './strategyEngine';
+import { evaluateAllSignals, precomputeSessionMinutes, EngineState, EngineLookbacks } from './strategyEngine';
 import { StrategyIndicators } from './strategies';
 import {
   calculateRSI, calculateEMA, calculateATR, calculateADX,
@@ -66,7 +66,8 @@ export function runSingleBacktest(
 export function runSingleBacktestWithIndicators(
   candles: Candle[],
   params: ExtendedStocksStrategyParameters,
-  indicators: StrategyIndicators
+  indicators: StrategyIndicators,
+  sessionMinutes?: Int16Array
 ): BacktestResult {
   if (candles.length < 100) {
     return emptyResult(params);
@@ -256,7 +257,7 @@ export function runSingleBacktestWithIndicators(
     // === ENTRY LOGIC ===
     if (cooldownBarsLeft > 0) { cooldownBarsLeft--; continue; }
 
-    const signals = evaluateAllSignals(candles, i, indicators, params, state, lookbacks);
+    const signals = evaluateAllSignals(candles, i, indicators, params, state, lookbacks, sessionMinutes);
 
     if (signals.buyFinal && position <= 0) {
       // Close short if flipping
