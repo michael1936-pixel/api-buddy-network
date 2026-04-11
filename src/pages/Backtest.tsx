@@ -5,7 +5,10 @@ import { toast } from "@/hooks/use-toast";
 import { SmartOptimizationProgressCard } from "@/components/backtest/OptimizationProgress";
 import SymbolSearch from "@/components/backtest/SymbolSearch";
 import { useOptimizationStore, allStages } from "@/stores/optimizationStore";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { estimateAllStageCombinations } from "@/lib/optimizer/smartOptimizer";
+import { NNE_PRESET_CONFIG } from "@/lib/optimizer/presetConfigs";
+import { Badge } from "@/components/ui/badge";
 
 type ResultFilter = 'all' | 'approved' | 'rejected';
 
@@ -19,14 +22,19 @@ export default function BacktestPage() {
   const {
     isRunning, currentSymbol, enabledStages, stageStatuses, stageResults,
     smartProgress, stageProgressMap, overallCombinations, elapsedTime,
-    combinationsPerSecond, error,
-    runOptimization, stopOptimization, toggleStage, rehydrate,
+    combinationsPerSecond, error, bestTrainReturn, bestTestReturn,
+    symbolQueue, queueIndex, queueResults, stageEstimates,
+    runOptimization, runOptimizationQueue, stopOptimization, toggleStage, rehydrate,
   } = useOptimizationStore();
 
-  // Rehydrate on mount
+  // Compute stage estimates once
+  const computedEstimates = useMemo(() => {
+    if (Object.keys(stageEstimates).length > 0) return stageEstimates;
+    return estimateAllStageCombinations(NNE_PRESET_CONFIG);
+  }, [stageEstimates]);
+
   useEffect(() => { rehydrate(); }, []);
 
-  // Show error toast
   useEffect(() => {
     if (error && error !== lastToastRef.current) {
       lastToastRef.current = error;
@@ -38,6 +46,10 @@ export default function BacktestPage() {
     runOptimization(symbol, queryClient);
   }, [runOptimization, queryClient]);
 
+  const handleRunQueue = useCallback((symbols: string[]) => {
+    runOptimizationQueue(symbols, queryClient);
+  }, [runOptimizationQueue, queryClient]);
+
   const handleSkipStage = useCallback(() => {
     console.log('[Backtest] Skip stage requested');
   }, []);
@@ -46,7 +58,23 @@ export default function BacktestPage() {
 
   return (
     <div className="space-y-4">
-      <SymbolSearch onSelect={handleRunOptimization} disabled={isRunning} />
+      <SymbolSearch onSelect={handleRunOptimization} onRunQueue={handleRunQueue} disabled={isRunning} />
+
+      {/* Queue status */}
+      {symbolQueue.length > 1 && (
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="text-xs text-muted-foreground">תור:</span>
+          {symbolQueue.map((s, i) => {
+            const status = queueResults[s] || 'pending';
+            const icon = status === 'done' ? '✅' : status === 'running' ? '🔄' : status === 'failed' ? '❌' : '⬜';
+            return (
+              <Badge key={s} variant={status === 'running' ? 'default' : 'secondary'} className={cn("text-xs font-mono gap-1", status === 'running' && "animate-pulse")}>
+                {icon} {s}
+              </Badge>
+            );
+          })}
+        </div>
+      )}
 
       <div className="flex justify-between items-center">
         <span className="text-base font-semibold">S&P 500 — {tracked.length || "~420"} מניות</span>
@@ -74,6 +102,9 @@ export default function BacktestPage() {
           overallCombinations={overallCombinations}
           combinationsPerSecond={combinationsPerSecond}
           symbol={currentSymbol}
+          bestTrainReturn={bestTrainReturn}
+          bestTestReturn={bestTestReturn}
+          stageEstimates={computedEstimates}
         />
       )}
 
