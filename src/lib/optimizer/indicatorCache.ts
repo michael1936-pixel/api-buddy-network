@@ -80,8 +80,8 @@ function getIndicatorParamsKey(params: ExtendedStocksStrategyParameters, dataset
 /** Build a stable dataset identity from candles (symbol + date range + count) */
 export function buildDatasetId(candles: Candle[], symbol?: string, phase?: string): string {
   if (candles.length === 0) return 'empty';
-  const first = candles[0].date ?? candles[0].timestamp ?? '';
-  const last = candles[candles.length - 1].date ?? candles[candles.length - 1].timestamp ?? '';
+  const first = candles[0].timestamp;
+  const last = candles[candles.length - 1].timestamp;
   return `${symbol || 'unk'}:${phase || ''}:${candles.length}:${first}:${last}`;
 }
 
