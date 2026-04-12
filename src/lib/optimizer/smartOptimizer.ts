@@ -537,8 +537,9 @@ export function getOptimizationStages(): { name: string; stageNumber: number; ro
 export function estimateAllStageCombinations(baseConfig: ExtendedStocksOptimizationConfig): Record<number, number> {
   const stages = generateDynamicStages();
   const estimates: Record<number, number> = {};
-  const numGoodZones = 10;
-  const zoneExpansion = 1;
+  const topRound1FullCombos = 3;
+  const localExpansionChoices = 3; // center-step, center, center+step
+
   for (let i = 0; i < stages.length; i++) {
     const stage = stages[i];
     let count = 1;
@@ -549,13 +550,23 @@ export function estimateAllStageCombinations(baseConfig: ExtendedStocksOptimizat
       const tuneRange = stage.tuneRange || 2;
       for (const key of stage.parametersToOptimize) {
         if (BOOLEAN_PARAMS_SET.has(key)) { count *= 2; continue; }
-        count *= (2 * tuneRange + 1);
+        const customRange = stage.customRanges?.[key];
+        const preset = customRange || (baseConfig as any)[key];
+        if (preset && typeof preset === 'object' && 'min' in preset && preset.min !== preset.max) {
+          count *= (2 * tuneRange + 1);
+        }
       }
     } else if (stage.useZoneData) {
-      // R2 zone-based: numZones * (2*expansion+1) per parameter
+      // Per document: Round 2 is seeded from the top full combinations of Round 1,
+      // then each varying numeric parameter is expanded locally by -step / center / +step.
+      count = topRound1FullCombos;
       for (const key of stage.parametersToOptimize) {
-        if (BOOLEAN_PARAMS_SET.has(key)) { count *= 2; continue; }
-        count *= numGoodZones * (2 * zoneExpansion + 1);
+        if (BOOLEAN_PARAMS_SET.has(key)) continue;
+        const customRange = stage.customRanges?.[key];
+        const preset = customRange || (baseConfig as any)[key];
+        if (preset && typeof preset === 'object' && 'min' in preset && preset.min !== preset.max) {
+          count *= localExpansionChoices;
+        }
       }
     } else {
       for (const key of stage.parametersToOptimize) {
@@ -569,7 +580,8 @@ export function estimateAllStageCombinations(baseConfig: ExtendedStocksOptimizat
         }
       }
     }
-    estimates[i + 1] = count;
+
+    estimates[i + 1] = Math.max(1, count);
   }
   return estimates;
 }
