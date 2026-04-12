@@ -1,51 +1,24 @@
 
 
-## תיקון התקדמות כללית — שימוש ב-stageEstimates לחישוב מדויק
+## תיקון שגיאות Runtime בחנות האופטימיזציה
 
-### הבעיה
-הלוגיקה הנוכחית צוברת combos רק כשרואים מעבר שלב בזמן אמת. אם המשתמש פותח את הדף באמצע ריצה, או אם שלבים 1-2 כבר הסתיימו לפני שה-polling התחיל — הצבירה מתפספסת. לכן "התקדמות כללית" מציגה את אותם מספרים כמו "שלב נוכחי".
-
-### פתרון — חישוב מבוסס stageEstimates + currentStage
-במקום לצבור ידנית, נחשב מ-`stageEstimates` (שכבר קיים ומכיל את מספר הקומבינציות לכל שלב):
-
-```
-completedCombos = סכום stageEstimates של כל השלבים שמספרם < currentStage
-overallCurrent = completedCombos + currentCombo
-overallTotal = סכום stageEstimates של כל השלבים המופעלים
-```
+### בעיות
+1. **`Cannot destructure 'activeRunId'`** — ב-`startPolling` יש guard (`if (!state)`) אבל ב-`startPollingQueue` (שורה 438) אין — `get()` מחזיר `undefined` אחרי HMR/hot reload
+2. **`REALISTIC_MAX_TOTAL is not defined`** — שארית מגרסה ישנה שנשמרה ב-cache של Vite. כבר לא בקוד הנוכחי, אבל צריך לוודא שאין התייחסות
 
 ### שינויים
 
 | קובץ | שינוי |
 |---|---|
-| `src/stores/optimizationStore.ts` | בשני מקומות (startPolling + startPollingQueue): חישוב overall מתוך stageEstimates במקום צבירה ידנית. הסרת completedCombos/lastTrackedStage/lastStageTotalCombos |
+| `src/stores/optimizationStore.ts` | הוספת guard ב-`startPollingQueue`: `const state = get(); if (!state) { stopPolling(); return; }` לפני כל destructure. אותו דבר בכל מקום ש-`get()` נקרא ב-interval callbacks |
 
-### לוגיקה בפולינג
-```typescript
-// Get estimates (from store state or compute once)
-const estimates = get().stageEstimates;
-const enabledStages = get().enabledStages;
-
-// Sum completed stages
-let completedCombos = 0;
-for (const [stageNum, combos] of Object.entries(estimates)) {
-  if (Number(stageNum) < currentStage) {
-    completedCombos += combos;
-  }
-}
-
-const overallCurrent = completedCombos + currentCombo;
-
-// Total = sum of all enabled stage estimates
-let overallTotal = 0;
-for (const [stageNum, combos] of Object.entries(estimates)) {
-  overallTotal += combos;
-}
-
-set({ overallCombinations: { current: overallCurrent, total: overallTotal } });
-```
-
-- הסרת המשתנים `completedCombos`, `lastTrackedStage`, `lastStageTotalCombos` (כבר לא נחוצים)
-- חישוב `stageEstimates` בתחילת הריצה (כבר קורה ב-Backtest.tsx → `computedEstimates`) ושמירתו ב-store
-- וידוא ש-`stageEstimates` מאוכלס ב-store לפני הפולינג (בפונקציית `runOptimization`/`runOptimizationQueue`)
+### פירוט
+- **שורה ~438**: שינוי `const { isRunning } = get()` ל:
+  ```typescript
+  const state = get();
+  if (!state) { stopPolling(); return; }
+  const { isRunning } = state;
+  ```
+- **שורות ~461-470**: הוספת guard דומה לפני גישה ל-`activeRun` data
+- השגיאה `REALISTIC_MAX_TOTAL` תיעלם אחרי rebuild (כבר לא בקוד)
 
