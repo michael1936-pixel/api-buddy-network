@@ -536,6 +536,54 @@ export type Database = {
         }
         Relationships: []
       }
+      optimization_trades: {
+        Row: {
+          bars_held: number | null
+          created_at: string
+          direction: string
+          entry_price: number
+          entry_time: string
+          exit_price: number | null
+          exit_reason: string | null
+          exit_time: string | null
+          id: number
+          optimization_result_id: number
+          pnl_pct: number | null
+          strategy: string | null
+          symbol: string
+        }
+        Insert: {
+          bars_held?: number | null
+          created_at?: string
+          direction?: string
+          entry_price: number
+          entry_time: string
+          exit_price?: number | null
+          exit_reason?: string | null
+          exit_time?: string | null
+          id?: never
+          optimization_result_id: number
+          pnl_pct?: number | null
+          strategy?: string | null
+          symbol: string
+        }
+        Update: {
+          bars_held?: number | null
+          created_at?: string
+          direction?: string
+          entry_price?: number
+          entry_time?: string
+          exit_price?: number | null
+          exit_reason?: string | null
+          exit_time?: string | null
+          id?: never
+          optimization_result_id?: number
+          pnl_pct?: number | null
+          strategy?: string | null
+          symbol?: string
+        }
+        Relationships: []
+      }
       positions: {
         Row: {
           be_triggered: boolean | null
