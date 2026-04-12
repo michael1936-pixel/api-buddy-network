@@ -39,10 +39,11 @@ Deno.serve(async (req) => {
     const symbolsData: Array<{
       symbol: string;
       candles: Array<{ timestamp: number; open: number; high: number; low: number; close: number; volume: number }>;
+      startDate?: string;
+      endDate?: string;
     }> = [];
 
     for (const symbol of symbols) {
-      // Fetch all bars ordered by timestamp
       let allBars: any[] = [];
       let offset = 0;
       const batchSize = 1000;
@@ -70,8 +71,6 @@ Deno.serve(async (req) => {
         continue;
       }
 
-      // CRITICAL: Convert timestamps from ISO strings to epoch ms numbers
-      // The optimizer expects Candle.timestamp as number (ms)
       const candles = allBars.map(bar => ({
         timestamp: new Date(bar.timestamp).getTime(),
         open: bar.open,
@@ -81,7 +80,7 @@ Deno.serve(async (req) => {
         volume: bar.volume,
       }));
 
-      console.log(`Loaded ${candles.length} bars for ${symbol}, timestamps: ${candles[0].timestamp} to ${candles[candles.length-1].timestamp}`);
+      console.log(`Loaded ${candles.length} bars for ${symbol}`);
       symbolsData.push({
         symbol,
         candles,
@@ -98,14 +97,10 @@ Deno.serve(async (req) => {
     }
 
     // 2. Build periodSplit (70% train, 30% test)
-    // Use the first symbol's data range for the split
     const firstData = symbolsData[0].candles;
     const trainPercent = 70;
     const splitIndex = Math.floor(firstData.length * (trainPercent / 100));
     
-    // CRITICAL: Send timestamps as ISO strings so Railway can do new Date(str)
-    // The optimizer's PeriodSplit expects Date objects; JSON serializes them as ISO strings
-    // Railway must deserialize: new Date(periodSplit.trainStartDate)
     const periodSplit = {
       trainStartDate: new Date(firstData[0].timestamp).toISOString(),
       trainEndDate: new Date(firstData[splitIndex - 1].timestamp).toISOString(),
@@ -114,10 +109,10 @@ Deno.serve(async (req) => {
       trainPercent,
     };
 
-    // 3. Build config — use NNE preset config (same as client)
+    // 3. Build config
     const config = userConfig || getNNEPresetConfig();
 
-    // 4. Create optimization_runs row
+    // 4. Create optimization_runs rows
     const runIds: number[] = [];
     for (const symbol of symbols) {
       const { data, error } = await supabase
@@ -147,7 +142,7 @@ Deno.serve(async (req) => {
       );
     }
 
-    // 5. Send to Railway server
+    // 5. Fire-and-forget: send to Railway without waiting for response
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
     };
@@ -156,47 +151,60 @@ Deno.serve(async (req) => {
     }
 
     const baseUrl = railwayUrl.startsWith('http') ? railwayUrl : `https://${railwayUrl}`;
-    
-    // Send one request per symbol (Railway handles one at a time)
-    const results: any[] = [];
+
+    // Send requests in background — don't await them
     for (let i = 0; i < symbols.length; i++) {
       const symbol = symbols[i];
       const symData = symbolsData.find(s => s.symbol === symbol);
       if (!symData) continue;
 
-      const railwayResponse = await fetch(`${baseUrl}/api/optimize`, {
-        method: "POST",
-        headers,
-        body: JSON.stringify({
-          symbolsData: [symData],
-          config,
-          periodSplit,
-          runId: runIds[i],
-          mode: 'single',
-          enabled_stages: enabled_stages || null,
-        }),
+      const payload = JSON.stringify({
+        symbolsData: [symData],
+        config,
+        periodSplit,
+        runId: runIds[i],
+        mode: 'single',
+        enabled_stages: enabled_stages || null,
       });
 
-      if (!railwayResponse.ok) {
-        const errText = await railwayResponse.text();
-        console.error(`Railway error for ${symbol}:`, errText);
-        await supabase
-          .from("optimization_runs")
-          .update({ status: "failed", error_message: `Railway error: ${errText}` })
-          .eq("id", runIds[i]);
-        results.push({ symbol, error: errText });
-      } else {
-        const railwayData = await railwayResponse.json();
-        results.push({ symbol, ...railwayData });
-      }
+      const payloadSizeMB = (payload.length / (1024 * 1024)).toFixed(2);
+      console.log(`Sending ${symbol} to Railway: ${payloadSizeMB} MB payload, runId=${runIds[i]}`);
+
+      // Fire-and-forget with a 30s timeout — log errors but don't block response
+      fetch(`${baseUrl}/api/optimize`, {
+        method: "POST",
+        headers,
+        body: payload,
+        signal: AbortSignal.timeout(30000),
+      })
+        .then(async (res) => {
+          if (!res.ok) {
+            const errText = await res.text().catch(() => "empty");
+            console.error(`Railway returned ${res.status} for ${symbol}: ${errText}`);
+            await supabase
+              .from("optimization_runs")
+              .update({ status: "failed", error_message: `Railway ${res.status}: ${errText.slice(0, 500)}` })
+              .eq("id", runIds[i]);
+          } else {
+            console.log(`Railway accepted ${symbol} optimization (runId=${runIds[i]})`);
+          }
+        })
+        .catch(async (err) => {
+          console.error(`Railway fetch error for ${symbol}:`, err.message);
+          await supabase
+            .from("optimization_runs")
+            .update({ status: "failed", error_message: `Network error: ${err.message}` })
+            .eq("id", runIds[i]);
+        });
     }
 
+    // Return immediately — Railway will update progress via DB
     return new Response(
       JSON.stringify({
         success: true,
         run_ids: runIds,
         symbols,
-        results,
+        message: "Optimization started — Railway will process in background",
       }),
       { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
