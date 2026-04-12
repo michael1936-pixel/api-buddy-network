@@ -371,6 +371,20 @@ export async function runSmartOptimization(
       prevRound = stage.roundNumber;
     }
 
+    // Inter-stage memory cleanup: evict unprotected cache entries every stage
+    {
+      let evicted = 0;
+      for (const [key, entry] of cache) {
+        if (!(entry as any).protected) { cache.delete(key); evicted++; }
+      }
+      if (evicted > 0) console.log(`🧹 Inter-stage cleanup: evicted ${evicted} cache entries`);
+      indicatorCache.clear();
+      if (typeof globalThis !== 'undefined' && (globalThis as any).gc) {
+        (globalThis as any).gc();
+        console.log('🧹 GC triggered between stages');
+      }
+    }
+
     console.log(`\n▶ Stage ${si + 1}/${stages.length}: ${stage.name} (Round ${stage.roundNumber})`);
 
     // Apply winning combination strategies to Round 3 stages
@@ -482,7 +496,7 @@ export async function runSmartOptimization(
     if (stage.isFinalTuning) {
       stageCfg = createFineTuneConfig(baseConfig, bestParams, stage.parametersToOptimize, stage.tuneRange || 2);
     } else if (stage.useZoneData && stage.round1StageIndex !== undefined && round1Zones[stage.round1StageIndex]) {
-      const zones = collectTopZones(round1Zones[stage.round1StageIndex], stage.parametersToOptimize, numGoodZones);
+      const zones = collectTopZones(round1Zones[stage.round1StageIndex], stage.parametersToOptimize, Math.min(numGoodZones, 50));
       stageCfg = createZoneConfig(baseConfig, zones, stage.parametersToOptimize, bestParams, zoneExpansionSteps);
 
       // Guard against Cartesian explosion: if zone config produces too many combos, fallback to fine-tune
