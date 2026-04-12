@@ -218,17 +218,17 @@ export default function BacktestPage() {
                 return (
                   <div key={o.id} className="row-item cursor-pointer" onClick={() => { setSelectedResultId(o.id); setSelectedSymbol(o.symbol); }}>
                     <span className="font-bold w-[60px]">{o.symbol}</span>
-                    <span className={cn("font-mono w-[65px]", (o.train_return || 0) >= 0 ? "text-trading-profit" : "text-trading-loss")}>
+                    <span className={cn("w-[65px]", (o.train_return || 0) >= 0 ? "text-trading-profit" : "text-trading-loss")}>
                       {(o.train_return || 0) >= 0 ? "+" : ""}{(o.train_return || 0).toFixed(1)}%
                     </span>
-                    <span className={cn("font-mono w-[65px]", (o.test_return || 0) >= 0 ? "text-primary" : "text-trading-loss")}>
+                    <span className={cn("w-[65px]", (o.test_return || 0) >= 0 ? "text-primary" : "text-trading-loss")}>
                       {(o.test_return || 0) >= 0 ? "+" : ""}{(o.test_return || 0).toFixed(1)}%
                     </span>
-                    <span className="font-mono w-[45px]">{o.win_rate || 0}%</span>
-                    <span className="font-mono w-[50px]" style={{ color: rc }}>
+                    <span className="w-[45px]">{(o.win_rate || 0).toFixed(1)}%</span>
+                    <span className="w-[50px]" style={{ color: rc }}>
                       {(o.max_drawdown || 0).toFixed(0)}%
                     </span>
-                    <span className="font-mono w-[50px]">{o.agent_confidence?.toFixed(0) || '-'}</span>
+                    <span className="w-[50px]">{o.agent_confidence?.toFixed(0) || '-'}</span>
                     <span className="flex-1 text-left">
                       <span className={cn("text-[10px] px-1 rounded", o.is_active ? "bg-trading-profit/20 text-trading-profit" : "bg-trading-loss/20 text-trading-loss")}>
                         {o.agent_decision === 'approved' ? '✅ מאושר' : '❌ נדחה'}
