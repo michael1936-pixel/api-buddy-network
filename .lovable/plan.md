@@ -1,18 +1,14 @@
 
 
-# הבעיה האמיתית
+# יצירת חבילת קבצים מלאה של האופטימייזר
 
-Railway בונה מ-repo נפרד ב-GitHub — לא מ-Lovable. השינויים שעשיתי כאן (הסרת console.log, הגדלת cache, ביטול GC בין stages) **לא הגיעו לשרת**.
+## מה אעשה
+אאסוף את כל 16 הקבצים מ-`src/lib/optimizer/` + את ה-worker לקובץ ZIP אחד (`/mnt/documents/optimizer-bundle.zip`) שתוכל להעתיק ישירות ל-repo של Railway ולעשות push.
 
-# הפתרון
+## הקבצים שייכללו
+- `src/lib/optimizer/` — כל 16 הקבצים (smartOptimizer, portfolioOptimizer, indicatorCache, indicators, strategies, types, debugConfig, וכו')
+- `src/workers/optimizer.worker.ts`
 
-אייצר קובץ מוכן (`/mnt/documents/smartOptimizer-patched.ts`) עם כל התיקונים שצריך להעתיק ל-repo של Railway:
-
-1. **ביטול כל console.log** בלולאת האופטימיזציה (חוץ מ-errors)
-2. **ביטול GC בין stages** — רק בין rounds
-3. **הגדלת indicator cache** מ-5 ל-50
-4. **ביטול cache eviction בין stages**
-5. **הוספת OPTIMIZER_BUILD** לזיהוי גרסה
-
-תעתיק את הקובץ ל-repo של Railway ותעשה push — אז Railway יבנה אוטומטית עם הקוד המתוקן.
+## פורמט
+ZIP עם מבנה תיקיות תואם — פשוט לחלץ ולהחליף.
 
