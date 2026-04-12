@@ -545,9 +545,11 @@ export function runPortfolioBacktest(
   const testResults: PortfolioBacktestResult[] = [];
 
   for (const sd of pf) {
-    // Get or compute indicators from cache
-    const trainPre = cache.getOrCompute(sd.trainCandles, params);
-    const testPre = cache.getOrCompute(sd.testCandles, params);
+    // Get or compute indicators from cache — with datasetId for correct scoping
+    const trainDatasetId = `${sd.symbol}:train:${sd.trainCandles.length}`;
+    const testDatasetId = `${sd.symbol}:test:${sd.testCandles.length}`;
+    const trainPre = cache.getOrCompute(sd.trainCandles, params, trainDatasetId);
+    const testPre = cache.getOrCompute(sd.testCandles, params, testDatasetId);
 
     // Build strategy-specific indicators (rolling arrays)
     const trainInd = buildIndicatorsFromPrecomputed(trainPre, params);
