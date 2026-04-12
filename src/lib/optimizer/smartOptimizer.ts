@@ -350,6 +350,7 @@ export async function runSmartOptimization(
   round1StepMultiplier: number = 4,
   numGoodZones: number = 10,
   zoneExpansionSteps: number = 1,
+  abortCheckFn?: () => Promise<boolean>,
 ): Promise<SmartOptimizationResult> {
   // Always log build version — critical for verifying Railway deployment
   console.log(`SMART_OPTIMIZER_BUILD=${OPTIMIZER_BUILD}`);
