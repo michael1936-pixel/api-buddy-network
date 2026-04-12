@@ -2,6 +2,7 @@
  * Smart Optimizer — from server
  * 3 Rounds, 30 Stages (broad → refine → final)
  */
+import { ENABLE_SMART_OPTIMIZER_LOGS } from './debugConfig';
 import type {
   ExtendedStocksOptimizationConfig, ExtendedStocksStrategyParameters,
   SymbolData, PeriodSplit, MultiObjectiveResult,
