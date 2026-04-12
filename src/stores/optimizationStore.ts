@@ -84,6 +84,10 @@ let lastComboCount = 0;
 let lastComboTime = 0;
 let lastServerUpdatedAt = '';
 let speedHistory: number[] = [];
+// Cumulative progress tracking across stages
+let completedCombos = 0;
+let lastTrackedStage = 0;
+let lastStageTotalCombos = 0;
 
 function stopPolling() {
   if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
@@ -145,6 +149,9 @@ export const useOptimizationStore = create<OptimizationState>((set, get) => ({
     lastComboCount = 0;
     lastComboTime = 0;
     lastServerUpdatedAt = '';
+    completedCombos = 0;
+    lastTrackedStage = 0;
+    lastStageTotalCombos = 0;
   },
 
   stopOptimization: () => {
@@ -172,7 +179,7 @@ export const useOptimizationStore = create<OptimizationState>((set, get) => ({
         isRunning: true,
         currentSymbol: lastRun.symbol,
         activeRunId: lastRun.id,
-        overallCombinations: { current: lastRun.current_combo || 0, total: Math.min(lastRun.total_combos || 0, 300_000) },
+        overallCombinations: { current: lastRun.current_combo || 0, total: lastRun.total_combos || 0 },
         bestTrainReturn: lastRun.best_train,
         bestTestReturn: lastRun.best_test,
       });
@@ -180,7 +187,7 @@ export const useOptimizationStore = create<OptimizationState>((set, get) => ({
     } else {
       set({
         currentSymbol: lastRun.symbol,
-        overallCombinations: { current: lastRun.current_combo || 0, total: Math.min(lastRun.total_combos || 0, 300_000) },
+        overallCombinations: { current: lastRun.current_combo || 0, total: lastRun.total_combos || 0 },
         bestTrainReturn: lastRun.best_train,
         bestTestReturn: lastRun.best_test,
       });
@@ -302,13 +309,23 @@ function startPolling(
       set({ runLogs: ([...(logsRes.data as any[])].reverse()) as RunLogEntry[] });
     }
 
-    // Update progress
+    // Update progress — cumulative across stages
     const currentCombo = run.current_combo || 0;
-    const totalCombos = Math.min(run.total_combos || 0, 300_000);
+    const totalCombos = run.total_combos || 0;
     const currentStage = run.current_stage || 0;
 
+    // Detect stage transition and accumulate completed combos
+    if (currentStage > lastTrackedStage && lastTrackedStage > 0) {
+      completedCombos += lastStageTotalCombos;
+    }
+    lastTrackedStage = currentStage;
+    lastStageTotalCombos = totalCombos;
+
+    const overallCurrent = completedCombos + currentCombo;
+    const overallTotal = completedCombos + totalCombos;
+
     set({
-      overallCombinations: { current: Math.min(currentCombo, totalCombos), total: totalCombos },
+      overallCombinations: { current: overallCurrent, total: overallTotal },
       bestTrainReturn: run.best_train,
       bestTestReturn: run.best_test,
       smartProgress: {
@@ -434,15 +451,25 @@ function startPollingQueue(
     if (activeRun) {
       const run = activeRun as any;
       const currentCombo = run.current_combo || 0;
-      const totalCombos = Math.min(run.total_combos || 0, 300_000);
+      const totalCombos = run.total_combos || 0;
       const currentStage = run.current_stage || 0;
+
+      // Detect stage transition and accumulate completed combos
+      if (currentStage > lastTrackedStage && lastTrackedStage > 0) {
+        completedCombos += lastStageTotalCombos;
+      }
+      lastTrackedStage = currentStage;
+      lastStageTotalCombos = totalCombos;
+
+      const overallCurrent = completedCombos + currentCombo;
+      const overallTotal = completedCombos + totalCombos;
 
       set({
         activeRunId: run.id,
         currentSymbol: run.symbol,
         queueIndex: activeIdx >= 0 ? activeIdx : currentIdx,
         queueResults,
-        overallCombinations: { current: currentCombo, total: totalCombos },
+        overallCombinations: { current: overallCurrent, total: overallTotal },
         bestTrainReturn: run.best_train,
         bestTestReturn: run.best_test,
         smartProgress: {
