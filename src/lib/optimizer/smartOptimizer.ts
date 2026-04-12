@@ -347,11 +347,13 @@ export async function runSmartOptimization(
   numGoodZones: number = 10,
   zoneExpansionSteps: number = 1,
 ): Promise<SmartOptimizationResult> {
-  console.log('════════════════════════════════════════');
-  console.log(`SMART_OPTIMIZER_BUILD=v9`);
-  console.log(`Smart Optimizer: ${symbolsData.length} symbols, ${mode} mode`);
-  console.log(`Round 1: step ×${round1StepMultiplier} | Round 2: ${numGoodZones} zones ±${zoneExpansionSteps} | Round 3: combo + fine-tune`);
-  console.log('════════════════════════════════════════');
+  if (ENABLE_SMART_OPTIMIZER_LOGS) {
+    console.log('════════════════════════════════════════');
+    console.log(`SMART_OPTIMIZER_BUILD=v9`);
+    console.log(`Smart Optimizer: ${symbolsData.length} symbols, ${mode} mode`);
+    console.log(`Round 1: step ×${round1StepMultiplier} | Round 2: ${numGoodZones} zones ±${zoneExpansionSteps} | Round 3: combo + fine-tune`);
+    console.log('════════════════════════════════════════');
+  }
 
   const stages = generateDynamicStages(round1StepMultiplier);
   console.log(`Total stages: ${stages.length} (7 + 7 + ${stages.length - 14})`);
