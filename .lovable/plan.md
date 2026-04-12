@@ -1,17 +1,24 @@
 
 
-# תיקון Build Error — FileReader ב-csvParser.ts
+# תיקון V16 — שגיאות TS7022 ב-portfolioSimulator.ts
 
 ## הבעיה
-`csvParser.ts(85,24): error TS2304: Cannot find name 'FileReader'`
+שורות 355-356: `pf` ו-`fs` מקבלים `any` כי TypeScript לא מצליח להסיק טיפוס מביטויי `??` מקוננים.
 
-`FileReader` ו-`File` הם APIs של דפדפן. ב-Node.js הם לא קיימים. הפונקציה `readCSVFile` לא נחוצה בשרת (השרת קורא CSV כטקסט מה-DB, לא מקבצים).
+## התיקון
+שינוי שתי שורות בלבד:
+```typescript
+// שורה 355 — מ:
+let pf = trailStop ?? stopAtBarOpen ?? (baseSL ?? entryPrice * 0.98);
+// ל:
+let pf: number = trailStop ?? stopAtBarOpen ?? (baseSL ?? entryPrice * 0.98);
 
-## מה אעשה
+// שורה 356 — מ:
+let fs = pf;
+// ל:
+let fs: number = pf;
+```
 
-1. **עדכון `csvParser.ts`** בפרויקט Lovable — הוספת `// @ts-ignore` או הסרת הפונקציות `readCSVFile` ו-`detectTickerFromCSV` (לא נחוצות בשרת)
-
-2. **ייצור חבילה מתוקנת `railway-server-v15.zip`** — אותו דבר כמו v14, רק ש-`csvParser.ts` לא כולל את `readCSVFile` (שמשתמש ב-`FileReader`) ו-`detectTickerFromCSV` (שמשתמש ב-`File`). שתי הפונקציות האלה רלוונטיות רק לדפדפן.
-
-שאר הקבצים ללא שינוי מ-v14.
+## מה ייווצר
+חבילת `railway-server-v16.zip` עם התיקון הזה בלבד (שאר הקבצים זהים ל-v15).
 
