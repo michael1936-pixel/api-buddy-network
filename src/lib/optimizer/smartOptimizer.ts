@@ -347,6 +347,7 @@ export async function runSmartOptimization(
   zoneExpansionSteps: number = 1,
 ): Promise<SmartOptimizationResult> {
   console.log('════════════════════════════════════════');
+  console.log(`SMART_OPTIMIZER_BUILD=v9`);
   console.log(`Smart Optimizer: ${symbolsData.length} symbols, ${mode} mode`);
   console.log(`Round 1: step ×${round1StepMultiplier} | Round 2: ${numGoodZones} zones ±${zoneExpansionSteps} | Round 3: combo + fine-tune`);
   console.log('════════════════════════════════════════');
@@ -434,6 +435,7 @@ export async function runSmartOptimization(
     }
 
     console.log(`\n▶ Stage ${si + 1}/${stages.length}: ${stage.name} (Round ${stage.roundNumber})`);
+    console.log(`  isFinalTuning=${!!stage.isFinalTuning} useZoneData=${!!stage.useZoneData} customRanges=${!!stage.customRanges} stepMult=${stage.stepMultiplier || 1}`);
 
     // Apply winning combination strategies to Round 3 stages
     if (activeCombination && stage.roundNumber === 3 && !stage.isStrategyCombinationStage) {
@@ -614,6 +616,22 @@ export async function runSmartOptimization(
     if (stage.disableGlobalFilters) {
       GLOBAL_FILTER_BOOLS.forEach(k => (stageCfg as any)[k] = false);
       (stageCfg as any).bars_between_trades = { min: 0, max: 0, step: 1 };
+    }
+
+    // ═══ TELEMETRY: count actual planned combos before running ═══
+    {
+      const numericKeys = stage.parametersToOptimize.filter(k => !BOOLEAN_PARAMS_SET.has(k));
+      const boolCount = stage.parametersToOptimize.filter(k => BOOLEAN_PARAMS_SET.has(k)).length;
+      let plannedCombos = Math.pow(2, boolCount);
+      for (const key of numericKeys) {
+        const val = (stageCfg as any)[key];
+        if (val?.values?.length) plannedCombos *= val.values.length;
+        else if (val && typeof val === 'object' && 'min' in val && 'max' in val && 'step' in val) {
+          plannedCombos *= Math.max(1, Math.floor((val.max - val.min) / val.step) + 1);
+        }
+      }
+      const source = stage.isFinalTuning ? 'fineTune' : stage.useZoneData ? 'zoneData' : stage.customRanges ? 'customRanges' : 'expandConfig';
+      console.log(`START R${stage.roundNumber}/S${(si % 7) + 1} ${stage.name} | source=${source} | combos=${plannedCombos}`);
     }
 
     try {
