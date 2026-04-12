@@ -98,11 +98,14 @@ Deno.serve(async (req) => {
     const trainPercent = 70;
     const splitIndex = Math.floor(firstData.length * (trainPercent / 100));
     
+    // CRITICAL: Send timestamps as ISO strings so Railway can do new Date(str)
+    // The optimizer's PeriodSplit expects Date objects; JSON serializes them as ISO strings
+    // Railway must deserialize: new Date(periodSplit.trainStartDate)
     const periodSplit = {
-      trainStartDate: firstData[0].timestamp,
-      trainEndDate: firstData[splitIndex - 1].timestamp,
-      testStartDate: firstData[splitIndex].timestamp,
-      testEndDate: firstData[firstData.length - 1].timestamp,
+      trainStartDate: new Date(firstData[0].timestamp).toISOString(),
+      trainEndDate: new Date(firstData[splitIndex - 1].timestamp).toISOString(),
+      testStartDate: new Date(firstData[splitIndex].timestamp).toISOString(),
+      testEndDate: new Date(firstData[firstData.length - 1].timestamp).toISOString(),
       trainPercent,
     };
 
