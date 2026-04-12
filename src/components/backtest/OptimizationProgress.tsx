@@ -455,18 +455,12 @@ export const SmartOptimizationProgressCard: React.FC<SmartOptimizationProgressPr
                   : "bg-amber-500/10 border-amber-500/30 text-amber-400"
               )}>
                 {serverStatus === 'stalled' 
-                  ? `⚠️ השרת לא עדכן כבר ${Math.floor(secondsSinceLastUpdate)}s — ייתכן שהריצה תקועה`
-                  : `⏳ ממתין לעדכון מהשרת (${Math.floor(secondsSinceLastUpdate)}s)...`
+                  ? `⚠️ אין עדכון מהשרת כבר ${formatTime(secondsSinceLastUpdate)} — בדוק אם השרת פעיל`
+                  : `⏳ השרת מחשב... עדכון אחרון לפני ${formatTime(secondsSinceLastUpdate)}`
                 }
               </div>
             )}
           </div>
-          {isRunning && (
-            <Button variant="outline" size="sm" onClick={onSkipStage} className="w-full gap-2">
-              <SkipForward className="w-4 h-4" />
-              דלג לשלב הבא
-            </Button>
-          )}
         </div>
       )}
 
