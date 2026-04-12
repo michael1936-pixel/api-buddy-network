@@ -570,9 +570,9 @@ export async function runSmartOptimization(
       stageCfg = expandConfigForStage(stage, baseConfig, bestParams);
     }
 
-    // ═══ COMBO GUARD: dynamically reduce tuneRange if fine-tune/zone config is too large ═══
+    // ═══ COMBO GUARD: cap every stage at 300K combos ═══
     {
-      const MAX_STAGE_COMBOS = 5000;
+      const MAX_STAGE_COMBOS = 300_000;
       const numericKeys = stage.parametersToOptimize.filter(k => !BOOLEAN_PARAMS_SET.has(k));
       const boolCount = stage.parametersToOptimize.filter(k => BOOLEAN_PARAMS_SET.has(k)).length;
 
@@ -589,8 +589,9 @@ export async function runSmartOptimization(
       };
 
       let combos = countCombos(stageCfg);
-      if (combos > MAX_STAGE_COMBOS && !stage.customRanges && stage.roundNumber === 2) {
-        // Try reducing tuneRange from 2 → 1 → 0
+
+      // Step 1: try reducing tuneRange (only for fine-tune stages)
+      if (combos > MAX_STAGE_COMBOS && !stage.customRanges) {
         let tr = 2;
         while (combos > MAX_STAGE_COMBOS && tr > 0) {
           tr--;
@@ -598,10 +599,40 @@ export async function runSmartOptimization(
           combos = countCombos(stageCfg);
           console.log(`⚠ Combo guard: tuneRange=${tr} → ${combos} combos`);
         }
-        // If still too many (all locked params expanded by ±0 = 1 each, shouldn't happen), log it
-        if (combos > MAX_STAGE_COMBOS) {
-          console.log(`⚠ Combo guard: still ${combos} combos at tuneRange=0, proceeding with caution`);
+      }
+
+      // Step 2: if still over cap, prune values per parameter to fit
+      if (combos > MAX_STAGE_COMBOS) {
+        const originalCombos = combos;
+        const numParams = numericKeys.length || 1;
+        const comboBudgetForNumeric = MAX_STAGE_COMBOS / Math.max(1, Math.pow(2, boolCount));
+        const maxValsPerParam = Math.max(2, Math.floor(Math.pow(comboBudgetForNumeric, 1 / numParams)));
+
+        for (const key of numericKeys) {
+          const val = (stageCfg as any)[key];
+          if (!val) continue;
+
+          // Get all candidate values
+          let allValues: number[] = [];
+          if (val.values?.length) {
+            allValues = [...val.values];
+          } else if (typeof val === 'object' && 'min' in val && 'max' in val && 'step' in val) {
+            for (let v = val.min; v <= val.max + val.step * 0.01; v += val.step) {
+              allValues.push(Math.round(v * 1e6) / 1e6);
+            }
+          }
+
+          if (allValues.length <= maxValsPerParam) continue;
+
+          // Keep maxValsPerParam values closest to bestParams value
+          const best = (bestParams as any)[key] ?? allValues[Math.floor(allValues.length / 2)];
+          allValues.sort((a, b) => Math.abs(a - best) - Math.abs(b - best));
+          const kept = allValues.slice(0, maxValsPerParam).sort((a, b) => a - b);
+          (stageCfg as any)[key] = { values: kept };
         }
+
+        combos = countCombos(stageCfg);
+        console.log(`⚠ Combo cap: ${originalCombos} → ${combos} (maxValsPerParam=${maxValsPerParam})`);
       }
     }
 
