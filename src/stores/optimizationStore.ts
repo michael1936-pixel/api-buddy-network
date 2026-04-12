@@ -175,7 +175,9 @@ export const useOptimizationStore = create<OptimizationState>((set, get) => ({
         overallCombinations: { current: lastRun.current_combo || 0, total: Math.min(lastRun.total_combos || 0, 2_000_000) },
         bestTrainReturn: lastRun.best_train,
         bestTestReturn: lastRun.best_test,
-...
+      });
+      startPolling(get, set);
+    } else {
       set({
         currentSymbol: lastRun.symbol,
         overallCombinations: { current: lastRun.current_combo || 0, total: Math.min(lastRun.total_combos || 0, 2_000_000) },
