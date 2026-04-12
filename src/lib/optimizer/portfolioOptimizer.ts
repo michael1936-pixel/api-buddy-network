@@ -207,7 +207,8 @@ export async function optimizePortfolio(
         const portfolioResult = {
           mode: preFiltered.length === 1 ? 'single' as const : 'portfolio' as const,
           trainPeriod: periodSplit,
-          trainResults: result.trainResults, testResults: result.testResults,
+          trainResults: result.trainResults.map((r: any) => ({ ...r, result: { ...r.result, trades: [] } })),
+          testResults: result.testResults.map((r: any) => ({ ...r, result: { ...r.result, trades: [] } })),
           totalTrainReturn: result.totalTrainReturn, totalTestReturn: result.totalTestReturn,
           overfit: result.totalTrainReturn > 0 ? Math.abs(result.totalTrainReturn - result.totalTestReturn) / result.totalTrainReturn : 0,
           parameters: params, monthlyPerformance: [], initialCapital: 10000,
@@ -227,20 +228,20 @@ export async function optimizePortfolio(
 
     // Intra-stage memory cleanup every 200 combos
     if (current > 0 && current % 200 === 0) {
-      // Prune combinationCache to keep only protected + recent entries
-      if (combinationCache && combinationCache.size > 500) {
+      // Aggressive cache pruning — limit to 300 total, not just old stages
+      if (combinationCache && combinationCache.size > 300) {
         let pruned = 0;
         for (const [key, entry] of combinationCache) {
-          if (!entry.protected && entry.stageNumber < stageNumber) {
+          if (!entry.protected) {
             combinationCache.delete(key);
             pruned++;
           }
-          if (combinationCache.size <= 300) break;
+          if (combinationCache.size <= 200) break;
         }
-        if (pruned > 0) console.log(`🧹 Intra-stage prune: removed ${pruned} old cache entries`);
+        if (pruned > 0) console.log(`🧹 Intra-stage prune: removed ${pruned} cache entries (now ${combinationCache.size})`);
       }
       // Clear indicator cache to free large float arrays
-      if (indicatorCache && indicatorCache.stats.size > 10) {
+      if (indicatorCache && indicatorCache.stats.size > 5) {
         indicatorCache.clear();
       }
       // Trigger GC if available
