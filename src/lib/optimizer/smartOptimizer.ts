@@ -412,12 +412,6 @@ export async function runSmartOptimization(
         }
         if (ENABLE_SMART_OPTIMIZER_LOGS) console.log(`🧹 Evicted ${evicted} non-protected cache entries at round boundary`);
       }
-      // Clear indicator cache between rounds to free float arrays
-      indicatorCache.clear();
-      // Force GC at round boundary
-      if (typeof globalThis !== 'undefined' && (globalThis as any).gc) {
-        (globalThis as any).gc();
-      }
       prevRound = stage.roundNumber;
     }
 
