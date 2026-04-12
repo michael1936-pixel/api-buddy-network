@@ -38,7 +38,7 @@ Deno.serve(async (req) => {
     // 1. Fetch historical market data for all symbols
     const symbolsData: Array<{
       symbol: string;
-      candles: Array<{ timestamp: string; open: number; high: number; low: number; close: number; volume: number }>;
+      candles: Array<{ timestamp: number; open: number; high: number; low: number; close: number; volume: number }>;
     }> = [];
 
     for (const symbol of symbols) {
@@ -70,8 +70,19 @@ Deno.serve(async (req) => {
         continue;
       }
 
-      console.log(`Loaded ${allBars.length} bars for ${symbol}`);
-      symbolsData.push({ symbol, candles: allBars });
+      // CRITICAL: Convert timestamps from ISO strings to epoch ms numbers
+      // The optimizer expects Candle.timestamp as number (ms)
+      const candles = allBars.map(bar => ({
+        timestamp: new Date(bar.timestamp).getTime(),
+        open: bar.open,
+        high: bar.high,
+        low: bar.low,
+        close: bar.close,
+        volume: bar.volume,
+      }));
+
+      console.log(`Loaded ${candles.length} bars for ${symbol}`);
+      symbolsData.push({ symbol, candles });
     }
 
     if (symbolsData.length === 0) {
