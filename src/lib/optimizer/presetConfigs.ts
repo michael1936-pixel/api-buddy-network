@@ -48,18 +48,25 @@ export const NNE_PRESET_CONFIG = {
   // ATR Stop
   use_atr_sl: false, atr_mult_long: { min: 0.2, max: 3, step: 0.1 }, atr_mult_short: { min: 0.2, max: 3, step: 0.1 },
 
-  // Strategy 1 - EMA Trend
+  // Strategy 1 - EMA Trend (fixed values — single combination)
   enable_strat1: true, enable_rsi_exit: false,
   rsi_exit_long: { min: 40, max: 75, step: 1 }, rsi_exit_short: { min: 20, max: 60, step: 1 },
   min_bars_in_trade_exit: { min: 2, max: 12, step: 1 },
-  s1_ema_fast_len: { min: 5, max: 15, step: 2 }, s1_ema_mid_len: { min: 15, max: 30, step: 3 },
-  s1_ema_trend_len: { min: 30, max: 70, step: 10 }, s1_rsi_len: { min: 10, max: 20, step: 2 },
-  s1_atr_len: { min: 10, max: 20, step: 2 }, s1_atr_ma_len: { min: 8, max: 16, step: 2 },
-  s1_atr_hi_mult: { min: 0.5, max: 1.2, step: 0.1 }, s1_adx_len: { min: 8, max: 16, step: 2 },
-  s1_adx_strong: { min: 14, max: 24, step: 2 }, s1_bb_len: { min: 15, max: 25, step: 5 },
-  s1_bb_mult: { min: 1.8, max: 2.6, step: 0.2 }, s1_far_from_bb_pc: { min: 1, max: 4, step: 1 },
-  s1_vol_len: { min: 10, max: 20, step: 2 }, s1_hi_vol_mult: { min: 0.8, max: 1.5, step: 0.1 },
-  s1_min_conds: { min: 2, max: 4, step: 1 },
+  s1_ema_fast_len: { min: 9, max: 9, step: 1 },
+  s1_ema_mid_len: { min: 21, max: 21, step: 1 },
+  s1_ema_trend_len: { min: 50, max: 50, step: 1 },
+  s1_rsi_len: { min: 14, max: 14, step: 1 },
+  s1_atr_len: { min: 16, max: 16, step: 1 },
+  s1_atr_ma_len: { min: 12, max: 12, step: 1 },
+  s1_atr_hi_mult: { min: 0.85, max: 0.85, step: 0.01 },
+  s1_adx_len: { min: 11, max: 11, step: 1 },
+  s1_adx_strong: { min: 18, max: 18, step: 1 },
+  s1_bb_len: { min: 20, max: 20, step: 1 },
+  s1_bb_mult: { min: 2.2, max: 2.2, step: 0.1 },
+  s1_far_from_bb_pc: { min: 2, max: 2, step: 1 },
+  s1_vol_len: { min: 16, max: 16, step: 1 },
+  s1_hi_vol_mult: { min: 1, max: 1, step: 0.1 },
+  s1_min_conds: { min: 3, max: 3, step: 1 },
 
   // Strategy 2 - Bollinger
   enable_strat2: false, bb2_use_trend_filter: false,
