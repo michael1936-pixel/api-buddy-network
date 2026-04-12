@@ -1,34 +1,59 @@
 
 
-# תיקון: זירוז אופטימיזציה — הפחתת תדירות דיווח + שמירת best גלובלי
+# ניתוח: למה האופטימיזציה איטית
 
-## הבעיה
-ב-`portfolioOptimizer.ts` שורה 231, דיווח progress מתרחש **כל 10 איטרציות** עם `await setTimeout(0)`. עבור 668K קומבינציות זה **66,800 yields** לא הכרחיים — כל yield עולה ~1-4ms, סה"כ **67-267 שניות אבודות** רק על דיווח.
+## ממצא חשוב
+**השינויים שעשיתי ב-`portfolioOptimizer.ts` ו-`smartOptimizer.ts` הם קוד צד-לקוח (client-side) בלבד — הם לא משפיעים על שרת Railway כלל.** Railway מריץ את הקוד שלו באופן עצמאי.
 
-## התיקון
+## מה מצאתי בקוד של Bolt (שרץ ב-Railway)
 
-### 1. `src/lib/optimizer/portfolioOptimizer.ts` — שורה 231
-שינוי תדירות דיווח מ-`% 10` ל-`% 500`:
-```typescript
-if (current % 500 === 0 || current === totalCombos) {
+### בעיה 1: `onProgress` נקרא על כל קומבינציה בודדת
+```text
+portfolioOptimizer.ts שורה 537-549:
+onProgress({...}) נקרא על כל איטרציה — לא כל 50 או 500
 ```
-זה מוריד מ-66,800 yields ל-~1,336 — שיפור של **x50** בתקורת דיווח.
+אם ה-`onProgress` ב-Railway כותב ל-DB בכל קריאה, זו כתיבת רשת (network round-trip) על **כל קומבינציה**. עם 6,250 קומבינציות = 6,250 כתיבות DB.
 
-### 2. `src/lib/optimizer/smartOptimizer.ts` — שורה 672
-הוספת `globalBestReturn` ל-progress callback כדי שה-UI יציג תמיד את הערך הכי טוב מכל השלבים (ולא רק מהשלב הנוכחי):
+### בעיה 2: `setTimeout(0)` כל 3 איטרציות
+```text
+portfolioOptimizer.ts שורה 550:
+if (current % 3 === 0) {
+  await new Promise(resolve => setTimeout(resolve, 0));
+}
+```
+ב-Node.js, `setTimeout(0)` עולה ~1ms. עבור 6,250 קומבינציות: 6,250/3 × 1ms = **~2 שניות** אבודות רק על yields, **לכל שלב**.
+
+## מה צריך לתקן — **בקוד של Railway**
+
+### תיקון 1: הפחתת תדירות progress
+ב-`portfolioOptimizer.ts` של Railway, לעטוף את ה-onProgress:
 ```typescript
-(info) => onProgress?.({
-  ...info,
-  globalBestReturn: Math.max(globalBestTrain, info.bestReturn || 0),
-  globalBestTestReturn: Math.max(globalBestTest, info.bestTestReturn || 0),
-  ...
-})
+// במקום onProgress({...}) על כל איטרציה:
+if (current % 500 === 0 || current === totalCombinations) {
+  onProgress({...});
+}
 ```
 
-### 3. `src/lib/optimizer/smartOptimizer.ts` — stepMultiplier default
-שינוי ברירת מחדל מ-4 ל-6 ב-Round 1, שמוריד Long/Short מ-37K ל-~8K קומבינציות.
+### תיקון 2: הפחתת yields
+```typescript
+// במקום current % 3:
+if (current % 200 === 0) {
+  await new Promise(resolve => setTimeout(resolve, 0));
+}
+```
 
-## תוצאה צפויה
-- **מהירות**: x2-3 שיפור (פחות yields + פחות קומבינציות)
-- **UI**: best return לא "נעלם" בין שלבים
+### תיקון 3 (אופציונלי): throttle כתיבות DB
+ב-route handler של `/api/optimize`, לוודא שכתיבות DB מתבצעות מקסימום כל 2-5 שניות, לא על כל progress callback.
+
+## מה אני אעשה ב-Lovable
+1. **אחזיר** את `stepMultiplier` ל-4 (לא 6) — כי זה לא משפיע על Railway
+2. **אחזיר** את `MAX_STAGE_COMBOS` ל-300K — כי זה לא משפיע על Railway
+3. **אשאיר** את תיקון ה-`globalBestReturn` ב-progress — כי זה כן משפיע על ה-UI
+
+## סיכום
+הבעיה היא **בקוד של Railway**, לא בקוד של Lovable. צריך לשנות 2 שורות בשרת Railway:
+- `onProgress` כל 500 במקום כל 1
+- `setTimeout` כל 200 במקום כל 3
+
+זה אמור להחזיר את המהירות ל-400K+/דקה.
 
