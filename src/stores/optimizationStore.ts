@@ -7,16 +7,11 @@ import { create } from 'zustand';
 import { supabase } from '@/integrations/supabase/client';
 import {
   getOptimizationStages,
-  estimateAllStageCombinations,
   type SmartOptimizationProgress,
   type StageStatus,
   type StageResult,
 } from '@/lib/optimizer/smartOptimizer';
-import { NNE_PRESET_CONFIG } from '@/lib/optimizer/presetConfigs';
 
-// Compute realistic max total from actual stage estimates
-const _stageEstimates = estimateAllStageCombinations(NNE_PRESET_CONFIG);
-const REALISTIC_MAX_TOTAL = Object.values(_stageEstimates).reduce((a, b) => a + b, 0);
 
 const POLL_INTERVAL = 2000; // poll DB every 2s
 
@@ -310,7 +305,7 @@ function startPolling(
 
     // Update progress
     const currentCombo = run.current_combo || 0;
-    const totalCombos = Math.min(run.total_combos || 0, REALISTIC_MAX_TOTAL);
+    const totalCombos = run.total_combos || 0;
     const currentStage = run.current_stage || 0;
 
     set({
@@ -440,7 +435,7 @@ function startPollingQueue(
     if (activeRun) {
       const run = activeRun as any;
       const currentCombo = run.current_combo || 0;
-      const totalCombos = Math.min(run.total_combos || 0, REALISTIC_MAX_TOTAL);
+      const totalCombos = run.total_combos || 0;
       const currentStage = run.current_stage || 0;
 
       set({
