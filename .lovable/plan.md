@@ -1,24 +1,51 @@
 
 
-# תיקון V16 — שגיאות TS7022 ב-portfolioSimulator.ts
+# תיקון V17 — כל שגיאות ה-Build ב-Railway
 
 ## הבעיה
-שורות 355-356: `pf` ו-`fs` מקבלים `any` כי TypeScript לא מצליח להסיק טיפוס מביטויי `??` מקוננים.
+ה-`tsconfig.json` בפרויקט Railway לא מוגדר ל-Node.js, וחסרים type definitions. זה גורם ל-**4 קטגוריות שגיאות**:
+
+1. **`console`, `process`, `setTimeout`, `AbortSignal`, `AbortController`** — חסר `@types/node` ו-`lib` מתאים
+2. **`express`, `cors`** — חסר `@types/express`, `@types/cors`
+3. **`File`, `FileReader`** — Browser APIs שלא קיימים ב-Node
+4. **`@/integrations/supabase/client`** — path alias שלא מוגדר ב-Railway
 
 ## התיקון
-שינוי שתי שורות בלבד:
-```typescript
-// שורה 355 — מ:
-let pf = trailStop ?? stopAtBarOpen ?? (baseSL ?? entryPrice * 0.98);
-// ל:
-let pf: number = trailStop ?? stopAtBarOpen ?? (baseSL ?? entryPrice * 0.98);
 
-// שורה 356 — מ:
-let fs = pf;
-// ל:
-let fs: number = pf;
+### 1. `tsconfig.json` — הגדרה נכונה ל-Node.js
+```json
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "commonjs",
+    "lib": ["ES2022"],
+    "types": ["node"],
+    "outDir": "./dist",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "baseUrl": ".",
+    "paths": { "@/*": ["./src/*"] }
+  },
+  "include": ["src/**/*"]
+}
 ```
 
+### 2. `package.json` — הוספת devDependencies
+```
+@types/node, @types/express, @types/cors
+```
+
+### 3. `csvParser.ts` — הסרת `readCSVFile` (משתמש ב-`File`/`FileReader`)
+הפונקציה לא נדרשת בשרת. נחליף אותה בגרסת Node.js שמקבלת string.
+
+### 4. `testThresholdAgent.ts` + `trainTestSplitAgent.ts` — החלפת import
+מ-`@/integrations/supabase/client` ל-import ישיר של `createClient` מ-`@supabase/supabase-js`.
+
+### 5. `portfolioSimulator.ts` — שורות 355-356
+הוספת `: number` (כבר תוכנן ב-v16).
+
 ## מה ייווצר
-חבילת `railway-server-v16.zip` עם התיקון הזה בלבד (שאר הקבצים זהים ל-v15).
+חבילת `railway-server-v17.tar.gz` עם כל התיקונים למבנה הקיים.
 
