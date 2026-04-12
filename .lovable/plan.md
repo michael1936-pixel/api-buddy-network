@@ -1,36 +1,76 @@
 
 
-# תיקון חבילת Railway — מבנה תיקיות נכון
+# חבילת Railway מלאה — V14 (ZIP)
 
-## הבעיה
-ה-v12 ארז קבצים מתיקיית Lovable (`src/lib/optimizer/`) במקום מבנה שרת Railway (`railway-server/src/optimizer/`). ב-Railway ה-Dockerfile מחפש `src/server.ts` ולא מוצא.
+## מה נכלל
 
-## מה אעשה
+חבילת שרת Node.js/Express מוכנה ל-deploy, בפורמט ZIP (עובד טוב ב-Windows).
 
-1. **ייצור חבילה חדשה** `railway-server-v13-fixed.tar.gz` עם המבנה הנכון:
-
+### מבנה:
 ```text
 railway-server/
 ├── src/
-│   ├── server.ts          ← מה-full package (לא השתנה)
+│   ├── server.ts              ← Express + /api/optimize endpoint
 │   └── optimizer/
-│       ├── portfolioOptimizer.ts  ← מעודכן (ללא cleanup)
-│       ├── indicatorCache.ts      ← מעודכן (maxSize=500)
-│       ├── smartOptimizer.ts
-│       ├── strategies.ts
-│       ├── indicators.ts
 │       ├── types.ts
-│       └── ... (שאר הקבצים)
+│       ├── indicators.ts
+│       ├── indicatorCache.ts   ← maxSize=500
+│       ├── strategies.ts
+│       ├── portfolioSimulator.ts
+│       ├── portfolioOptimizer.ts  ← ללא cleanup
+│       ├── smartOptimizer.ts      ← ללא cleanup בין שלבים
+│       ├── multiObjectiveMetrics.ts
+│       ├── parameterValidation.ts
+│       ├── presetConfigs.ts
+│       ├── debugConfig.ts
+│       ├── csvParser.ts
+│       └── s2GroundTruth.ts
 ├── package.json
 ├── tsconfig.json
 ├── Dockerfile
 └── .env.example
 ```
 
-2. **הקבצים המעודכנים** (portfolioOptimizer + indicatorCache) יילקחו מה-Lovable project
-3. **שאר הקבצים** (server.ts, Dockerfile, package.json, tsconfig) מה-full package המקורי
-4. גם אגדיל את `max-old-space-size` ב-Dockerfile מ-2048 ל-20480 (יש לך 24GB)
+## תיקוני ביצועים בחבילה
 
-## שינוי בקובץ
-אין שינוי בקוד — רק ייצור חבילת deploy נכונה.
+### 1. `portfolioOptimizer.ts` — כבר תוקן (אין cleanup)
+
+### 2. `smartOptimizer.ts` — 3 בעיות שעדיין קיימות:
+
+**שורות 398-404**: מחיקת כל ה-cache entries שלא protected בין rounds
+→ **הסרה מלאה** — ה-cache שימושי בין rounds
+
+**שורות 416-428**: מחיקת cache + indicator cache + GC בין **כל שלב**
+→ **הסרה מלאה** — זה ההרס הגדול ביותר, מאלץ חישוב מחדש של אינדיקטורים
+
+**שורות 430-435**: `indicatorCache.setMaxSize(5)` ב-Round 2/3
+→ **שינוי ל-500** — יש 24GB, אין סיבה להגביל ל-5
+
+### 3. `indicatorCache.ts` — כבר מוגדר maxSize=500
+
+### 4. `Dockerfile` — `--max-old-space-size=20480` (20GB מתוך 24GB)
+
+### 5. `server.ts` — Express server עם:
+- `POST /api/optimize` — מקבל symbols + run_ids, מריץ ברקע
+- מוריד data מ-market_data table
+- מעדכן progress ל-optimization_runs כל 3 שניות
+- שומר תוצאות ל-optimization_results
+
+## פורמט
+ZIP במקום tar.gz — נפתח בקלות ב-Windows.
+
+## Deploy
+```powershell
+Expand-Archive railway-server-v14.zip -DestinationPath .
+cd railway-server
+git init
+git add .
+git commit -m "v14 no cleanup"
+git remote add origin https://github.com/michael1936-pixel/algomaykl-optimizer.git
+git push -u origin main --force
+```
+
+## צפי ביצועים
+- **לפני**: ~172 combos/sec (cache נמחק כל 200 combos + בין כל שלב)
+- **אחרי**: 5,000-10,000+ combos/sec (cache נשמר, אינדיקטורים מחושבים פעם אחת)
 
