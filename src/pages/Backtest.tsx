@@ -56,7 +56,7 @@ export default function BacktestPage() {
   }, [addToQueue]);
 
   const handleSkipStage = useCallback(() => {
-    console.log('[Backtest] Skip stage requested');
+    // Skip stage not yet implemented on server side
   }, []);
 
   const showProgress = isRunning || stageResults.length > 0;

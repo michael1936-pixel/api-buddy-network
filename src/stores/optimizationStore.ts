@@ -336,11 +336,11 @@ function startPolling(
       lastComboTime = now;
     }
 
-    // Stall detection
+    // Stall detection — generous thresholds since Railway may batch updates
     const secsSinceUpdate = serverUpdatedAt ? (now - new Date(serverUpdatedAt).getTime()) / 1000 : 0;
     let serverStatus: 'active' | 'slow' | 'stalled' | 'idle' = 'active';
-    if (secsSinceUpdate > 120) serverStatus = 'stalled';
-    else if (secsSinceUpdate > 30) serverStatus = 'slow';
+    if (secsSinceUpdate > 300) serverStatus = 'stalled';
+    else if (secsSinceUpdate > 60) serverStatus = 'slow';
     set({ lastServerUpdateAt: serverUpdatedAt, secondsSinceLastUpdate: secsSinceUpdate, serverStatus });
 
     // Check if done
@@ -468,8 +468,8 @@ function startPollingQueue(
 
       const secsSinceUpdate = serverUpdatedAt ? (now - new Date(serverUpdatedAt).getTime()) / 1000 : 0;
       let serverStatus: 'active' | 'slow' | 'stalled' | 'idle' = 'active';
-      if (secsSinceUpdate > 120) serverStatus = 'stalled';
-      else if (secsSinceUpdate > 30) serverStatus = 'slow';
+      if (secsSinceUpdate > 300) serverStatus = 'stalled';
+      else if (secsSinceUpdate > 60) serverStatus = 'slow';
       set({ lastServerUpdateAt: serverUpdatedAt, secondsSinceLastUpdate: secsSinceUpdate, serverStatus });
     } else {
       // All done
