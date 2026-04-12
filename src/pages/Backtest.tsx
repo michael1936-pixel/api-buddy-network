@@ -6,6 +6,7 @@ import { SmartOptimizationProgressCard } from "@/components/backtest/Optimizatio
 import SymbolSearch from "@/components/backtest/SymbolSearch";
 import { useOptimizationStore, allStages, type RunLogEntry } from "@/stores/optimizationStore";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import TradesDetailPanel from "@/components/backtest/TradesDetailPanel";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { estimateAllStageCombinations } from "@/lib/optimizer/smartOptimizer";
 import { NNE_PRESET_CONFIG } from "@/lib/optimizer/presetConfigs";
@@ -15,6 +16,8 @@ type ResultFilter = 'all' | 'approved' | 'rejected';
 
 export default function BacktestPage() {
   const [filter, setFilter] = useState<ResultFilter>('all');
+  const [selectedResultId, setSelectedResultId] = useState<number | null>(null);
+  const [selectedSymbol, setSelectedSymbol] = useState<string>('');
   const { data: optimizations = [] } = useOptimizationResults(filter);
   const { data: tracked = [] } = useTrackedSymbols();
   const queryClient = useQueryClient();
@@ -213,7 +216,7 @@ export default function BacktestPage() {
               .map((o: any) => {
                 const rc = o.overfit_risk === "low" ? "hsl(var(--trading-profit))" : o.overfit_risk === "medium" ? "hsl(var(--trading-warning))" : "hsl(var(--trading-loss))";
                 return (
-                  <div key={o.id} className="row-item cursor-pointer">
+                  <div key={o.id} className="row-item cursor-pointer" onClick={() => { setSelectedResultId(o.id); setSelectedSymbol(o.symbol); }}>
                     <span className="font-bold w-[60px]">{o.symbol}</span>
                     <span className={cn("font-mono w-[65px]", (o.train_return || 0) >= 0 ? "text-trading-profit" : "text-trading-loss")}>
                       {(o.train_return || 0) >= 0 ? "+" : ""}{(o.train_return || 0).toFixed(1)}%
@@ -241,6 +244,15 @@ export default function BacktestPage() {
           </div>
         )}
       </div>
+
+      {/* Trade details panel */}
+      {selectedResultId && (
+        <TradesDetailPanel
+          optimizationResultId={selectedResultId}
+          symbol={selectedSymbol}
+          onClose={() => setSelectedResultId(null)}
+        />
+      )}
     </div>
   );
 }
