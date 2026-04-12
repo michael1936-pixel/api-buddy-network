@@ -9,7 +9,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { ChevronDown, ChevronRight } from "lucide-react";
 
 interface Trade {
-  id: number;
+  id?: number;
   symbol: string;
   direction: string;
   entry_time: string;
@@ -20,6 +20,8 @@ interface Trade {
   exit_reason: string | null;
   strategy: string | null;
   bars_held: number;
+  strategy_id?: number;
+  _source?: 'stored' | 'replay';
 }
 
 interface GapDiagnosis {
@@ -45,14 +47,29 @@ interface VerificationStats {
   wins: number;
   losses: number;
   missing_bars: number;
+  stored_total_pnl?: number;
+  stored_win_rate?: number;
+  stored_count?: number;
 }
 
 interface VerificationResult {
   match: boolean;
+  has_stored_trades: boolean;
   expected_trades: number;
   actual_trades: number;
   expected_return: number;
   actual_return: number;
+  replay_trades?: Array<{
+    direction: string;
+    entry_time: string;
+    entry_price: number;
+    exit_time: string | null;
+    exit_price: number | null;
+    pnl_pct: number;
+    exit_reason: string;
+    bars_held: number;
+    strategy_id: number;
+  }>;
   discrepancies: GapDiagnosis[];
   gap_summary?: Record<string, number>;
   stats?: VerificationStats;
@@ -78,12 +95,21 @@ const SOURCE_LABELS: Record<string, string> = {
   unknown: '❓ לא מזוהה',
 };
 
+const STRATEGY_NAMES: Record<number, string> = {
+  1: 'EMA Trend',
+  2: 'BB Reversion',
+  3: 'Range Breakout',
+  4: 'Inside Bar',
+  5: 'ATR Squeeze',
+};
+
 export default function TradesDetailPanel({ optimizationResultId, symbol, onClose }: TradesDetailPanelProps) {
   const [trades, setTrades] = useState<Trade[]>([]);
   const [loading, setLoading] = useState(true);
   const [verifying, setVerifying] = useState(false);
   const [verification, setVerification] = useState<VerificationResult | null>(null);
   const [expandedTrade, setExpandedTrade] = useState<number | null>(null);
+  const [showReplayTrades, setShowReplayTrades] = useState(false);
 
   useEffect(() => {
     loadTrades();
@@ -101,7 +127,7 @@ export default function TradesDetailPanel({ optimizationResultId, symbol, onClos
       console.error('Failed to load trades:', error);
       setTrades([]);
     } else {
-      setTrades((data as any[]) || []);
+      setTrades((data as any[])?.map(t => ({ ...t, _source: 'stored' as const })) || []);
     }
     setLoading(false);
   }
@@ -113,18 +139,40 @@ export default function TradesDetailPanel({ optimizationResultId, symbol, onClos
         body: { optimization_result_id: optimizationResultId },
       });
       if (error) throw error;
-      setVerification(data as VerificationResult);
+      const vResult = data as VerificationResult;
+      setVerification(vResult);
+
+      // If no stored trades but we got replay trades, show those
+      if (trades.length === 0 && vResult.replay_trades && vResult.replay_trades.length > 0) {
+        setTrades(vResult.replay_trades.map((rt, i) => ({
+          id: -(i + 1),
+          symbol,
+          direction: rt.direction,
+          entry_time: rt.entry_time,
+          entry_price: rt.entry_price,
+          exit_time: rt.exit_time,
+          exit_price: rt.exit_price,
+          pnl_pct: rt.pnl_pct,
+          exit_reason: rt.exit_reason,
+          strategy: STRATEGY_NAMES[rt.strategy_id] || `S${rt.strategy_id}`,
+          bars_held: rt.bars_held,
+          strategy_id: rt.strategy_id,
+          _source: 'replay' as const,
+        })));
+        setShowReplayTrades(true);
+      }
     } catch (err: any) {
       toast({ title: '❌ שגיאת אימות', description: err.message, variant: 'destructive' });
     }
     setVerifying(false);
   }
 
-  const totalPnl = trades.reduce((sum, t) => sum + (t.pnl_pct || 0), 0);
-  const wins = trades.filter(t => t.pnl_pct > 0).length;
-  const winRate = trades.length > 0 ? (wins / trades.length * 100) : 0;
+  const displayTrades = trades;
+  const totalPnl = displayTrades.reduce((sum, t) => sum + (t.pnl_pct || 0), 0);
+  const wins = displayTrades.filter(t => t.pnl_pct > 0).length;
+  const winRate = displayTrades.length > 0 ? (wins / displayTrades.length * 100) : 0;
 
-  // Build a set of trade indices that have discrepancies
+  // Build gap map
   const tradeGaps = new Map<number, GapDiagnosis[]>();
   if (verification?.discrepancies) {
     for (const d of verification.discrepancies) {
@@ -144,9 +192,14 @@ export default function TradesDetailPanel({ optimizationResultId, symbol, onClos
       <div className="px-4 py-2 border-b border-primary/20 flex items-center justify-between">
         <div className="flex items-center gap-2">
           <Button variant="ghost" size="sm" onClick={onClose} className="text-xs h-6 px-2">✕</Button>
-          <Button variant="outline" size="sm" onClick={handleVerify} disabled={verifying || trades.length === 0} className="text-xs h-6">
-            {verifying ? '🔄 מאמת...' : '🔍 אמת עסקאות'}
+          <Button variant="outline" size="sm" onClick={handleVerify} disabled={verifying} className="text-xs h-6">
+            {verifying ? '🔄 מאמת...' : '🔍 אמת + Replay'}
           </Button>
+          {showReplayTrades && (
+            <Badge variant="outline" className="text-[9px] border-amber-500/40 text-amber-400 animate-pulse">
+              📡 מציג עסקאות מ-Replay
+            </Badge>
+          )}
         </div>
         <div className="flex items-center gap-3">
           <span className="text-[10px] text-muted-foreground">
@@ -155,15 +208,15 @@ export default function TradesDetailPanel({ optimizationResultId, symbol, onClos
           <span className={cn("text-[10px] font-mono", totalPnl >= 0 ? "text-trading-profit" : "text-trading-loss")}>
             סה"כ: {totalPnl >= 0 ? '+' : ''}{totalPnl.toFixed(1)}%
           </span>
-          <Badge variant="secondary" className="text-[10px]">{trades.length} עסקאות</Badge>
+          <Badge variant="secondary" className="text-[10px]">{displayTrades.length} עסקאות</Badge>
           <span className="text-sm font-semibold">📊 {symbol} — פירוט עסקאות</span>
         </div>
       </div>
 
-      {/* Extended Stats from verification */}
+      {/* Extended Stats */}
       {stats && (
         <div className="mx-3 mt-2 p-3 rounded-lg bg-muted/30 border border-border grid grid-cols-4 sm:grid-cols-6 gap-2 text-[10px]" dir="ltr">
-          <StatBox label="Total P&L" value={`${stats.total_pnl >= 0 ? '+' : ''}${stats.total_pnl.toFixed(1)}%`} color={stats.total_pnl >= 0 ? 'text-trading-profit' : 'text-trading-loss'} />
+          <StatBox label="Replay P&L" value={`${stats.total_pnl >= 0 ? '+' : ''}${stats.total_pnl.toFixed(1)}%`} color={stats.total_pnl >= 0 ? 'text-trading-profit' : 'text-trading-loss'} />
           <StatBox label="Win Rate" value={`${stats.win_rate.toFixed(0)}%`} />
           <StatBox label="Avg Win" value={`+${stats.avg_win.toFixed(2)}%`} color="text-trading-profit" />
           <StatBox label="Avg Loss" value={`${stats.avg_loss.toFixed(2)}%`} color="text-trading-loss" />
@@ -173,6 +226,9 @@ export default function TradesDetailPanel({ optimizationResultId, symbol, onClos
           <StatBox label="Win Streak" value={`${stats.max_win_streak}`} color="text-trading-profit" />
           <StatBox label="Loss Streak" value={`${stats.max_loss_streak}`} color="text-trading-loss" />
           <StatBox label="W/L" value={`${stats.wins}/${stats.losses}`} />
+          {stats.stored_count !== undefined && stats.stored_count > 0 && (
+            <StatBox label="Stored" value={`${stats.stored_count} trades`} color="text-muted-foreground" />
+          )}
           {stats.missing_bars > 0 && (
             <StatBox label="Missing Bars" value={`${stats.missing_bars}`} color="text-amber-400" />
           )}
@@ -183,18 +239,21 @@ export default function TradesDetailPanel({ optimizationResultId, symbol, onClos
       {verification && (
         <div className={cn(
           "mx-3 mt-2 p-3 rounded-lg text-xs",
-          verification.match ? "bg-emerald-500/10 border border-emerald-500/30" : "bg-red-500/10 border border-red-500/30"
+          verification.match ? "bg-emerald-500/10 border border-emerald-500/30" : "bg-amber-500/10 border border-amber-500/30"
         )}>
           <div className="font-semibold mb-1">
-            {verification.match ? '✅ אימות עבר — התוצאות תואמות' : '⚠️ נמצאו פערים'}
+            {verification.match ? '✅ אימות עבר — התוצאות תואמות' : verification.has_stored_trades ? '⚠️ נמצאו פערים בין שמור ל-Replay' : '🔄 Replay בלבד — אין עסקאות שמורות'}
           </div>
           <div className="text-muted-foreground">{verification.message}</div>
-          <div className="flex gap-4 mt-1">
-            <span>עסקאות: {verification.expected_trades} צפוי / {verification.actual_trades} בפועל</span>
-            <span>תשואה: {verification.expected_return?.toFixed(1)}% צפוי / {verification.actual_return?.toFixed(1)}% בפועל</span>
-          </div>
 
-          {/* Gap summary by source */}
+          {verification.has_stored_trades && (
+            <div className="flex gap-4 mt-1">
+              <span>שמור: {verification.expected_trades} עסקאות / {verification.expected_return?.toFixed(1)}%</span>
+              <span>Replay: {verification.actual_trades} עסקאות / {verification.actual_return?.toFixed(1)}%</span>
+            </div>
+          )}
+
+          {/* Gap summary */}
           {verification.gap_summary && Object.keys(verification.gap_summary).length > 0 && (
             <div className="mt-2 flex flex-wrap gap-2">
               {Object.entries(verification.gap_summary).map(([source, count]) => (
@@ -229,13 +288,19 @@ export default function TradesDetailPanel({ optimizationResultId, symbol, onClos
 
       {loading ? (
         <div className="text-center text-sm text-muted-foreground py-8">טוען עסקאות...</div>
-      ) : trades.length === 0 ? (
-        <div className="text-center text-sm text-muted-foreground py-8">
-          אין עסקאות שמורות — צריך לעדכן את שרת Railway לשמור trades
+      ) : displayTrades.length === 0 ? (
+        <div className="text-center text-muted-foreground py-8 space-y-2">
+          <div className="text-lg">📭</div>
+          <div className="text-sm font-medium">אין עסקאות שמורות עדיין</div>
+          <div className="text-xs text-muted-foreground/70 max-w-md mx-auto">
+            שרת Railway צריך לשמור עסקאות ל-optimization_trades בסוף כל אופטימיזציה.
+            <br />
+            בינתיים, לחץ <strong>"🔍 אמת + Replay"</strong> כדי להריץ את האסטרטגיה מחדש על נתוני השוק ולראות עסקאות.
+          </div>
         </div>
       ) : (
         <ScrollArea className="h-[300px]">
-          {/* Header */}
+          {/* Table header */}
           <div className="sticky top-0 z-10 px-2 py-1 grid grid-cols-[24px_40px_55px_70px_65px_70px_65px_55px_45px_1fr] gap-1 text-[9px] text-muted-foreground font-semibold border-b border-primary/10 bg-card" dir="ltr">
             <span></span>
             <span>#</span>
@@ -246,21 +311,23 @@ export default function TradesDetailPanel({ optimizationResultId, symbol, onClos
             <span>Price</span>
             <span>P&L</span>
             <span>Bars</span>
-            <span>Reason</span>
+            <span>Strategy / Reason</span>
           </div>
           <div className="p-1 space-y-0" dir="ltr">
-            {trades.map((t, i) => {
+            {displayTrades.map((t, i) => {
               const hasGap = tradeGaps.has(i + 1);
               const gaps = tradeGaps.get(i + 1) || [];
               const isExpanded = expandedTrade === i;
+              const isReplay = t._source === 'replay';
 
               return (
-                <Collapsible key={t.id} open={isExpanded} onOpenChange={() => setExpandedTrade(isExpanded ? null : i)}>
+                <Collapsible key={t.id || i} open={isExpanded} onOpenChange={() => setExpandedTrade(isExpanded ? null : i)}>
                   <CollapsibleTrigger asChild>
                     <div
                       className={cn(
                         "px-2 py-0.5 grid grid-cols-[24px_40px_55px_70px_65px_70px_65px_55px_45px_1fr] gap-1 text-[10px] font-mono rounded cursor-pointer hover:bg-primary/5",
                         hasGap && 'bg-red-500/5 border-l-2 border-red-500/50',
+                        isReplay && !hasGap && 'bg-blue-500/5 border-l-2 border-blue-500/30',
                         t.pnl_pct > 0 ? 'text-trading-profit/90' : t.pnl_pct < 0 ? 'text-trading-loss/90' : 'text-muted-foreground'
                       )}
                     >
@@ -282,8 +349,10 @@ export default function TradesDetailPanel({ optimizationResultId, symbol, onClos
                       </span>
                       <span className="text-muted-foreground">{t.bars_held || '-'}</span>
                       <span className="text-muted-foreground truncate flex items-center gap-1">
+                        {t.strategy && <span className="text-primary/60">{t.strategy}</span>}
                         {t.exit_reason || '-'}
                         {hasGap && <span className="text-red-400 text-[8px]">⚠️{gaps.length}</span>}
+                        {isReplay && <span className="text-blue-400 text-[8px]">🔄</span>}
                       </span>
                     </div>
                   </CollapsibleTrigger>
@@ -298,6 +367,7 @@ export default function TradesDetailPanel({ optimizationResultId, symbol, onClos
                         <span>Exit Price: <strong>{t.exit_price?.toFixed(4) || '-'}</strong></span>
                         <span>Bars Held: <strong>{t.bars_held || '-'}</strong></span>
                         <span>Direction: <strong>{t.direction}</strong></span>
+                        <span>Source: <strong>{isReplay ? '🔄 Replay' : '💾 DB'}</strong></span>
                       </div>
                       {gaps.length > 0 && (
                         <div className="mt-1 pt-1 border-t border-red-500/20 space-y-0.5">

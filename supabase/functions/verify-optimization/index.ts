@@ -8,13 +8,17 @@ const corsHeaders = {
 const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
 const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 
-// ── Indicator helpers (mirrors client-side logic) ──
+// ── Indicator helpers (Pine-compatible) ──
 
 function calcEMA(data: number[], period: number): number[] {
-  const ema: number[] = [];
+  const ema: number[] = new Array(data.length).fill(NaN);
+  if (data.length === 0 || period <= 0) return ema;
+  // SMA seed
+  let sum = 0;
+  for (let i = 0; i < Math.min(period, data.length); i++) sum += data[i];
+  ema[period - 1] = sum / period;
   const k = 2 / (period + 1);
-  ema[0] = data[0];
-  for (let i = 1; i < data.length; i++) {
+  for (let i = period; i < data.length; i++) {
     ema[i] = data[i] * k + ema[i - 1] * (1 - k);
   }
   return ema;
@@ -56,6 +60,171 @@ function calcATR(highs: number[], lows: number[], closes: number[], period: numb
   return atr;
 }
 
+function simpleSMA(values: number[], length: number): number[] {
+  const out = new Array(values.length).fill(NaN);
+  if (length <= 0) return out;
+  let s = 0;
+  for (let i = 0; i < values.length; i++) {
+    s += values[i];
+    if (i >= length) s -= values[i - length];
+    if (i >= length - 1) out[i] = s / length;
+  }
+  return out;
+}
+
+// ── Lightweight strategy replay ──
+
+interface ReplayTrade {
+  direction: string;
+  entry_time: string;
+  entry_price: number;
+  exit_time: string | null;
+  exit_price: number | null;
+  pnl_pct: number;
+  exit_reason: string;
+  bars_held: number;
+  strategy_id: number;
+}
+
+function replayStrategy(
+  marketData: Array<{ timestamp: string; open: number; high: number; low: number; close: number; volume: number }>,
+  params: Record<string, any>,
+): ReplayTrade[] {
+  if (marketData.length < 100) return [];
+
+  const closes = marketData.map(b => b.close);
+  const highs = marketData.map(b => b.high);
+  const lows = marketData.map(b => b.low);
+
+  // Compute indicators using actual param keys from optimization
+  const rsiLen = params.s1_rsi_len ?? 14;
+  const atrLen = params.s1_atr_len ?? 14;
+  const emaTrendLen = params.s1_ema_trend_len ?? 50;
+  const emaFastLen = params.s1_ema_fast_len ?? 9;
+  const emaMidLen = params.s1_ema_mid_len ?? 21;
+
+  const rsiArr = calcRSI(closes, rsiLen);
+  const atrArr = calcATR(highs, lows, closes, atrLen);
+  const ema50 = calcEMA(closes, emaTrendLen);
+  const ema9 = calcEMA(closes, emaFastLen);
+  const ema21 = calcEMA(closes, emaMidLen);
+  const atrAvg = simpleSMA(atrArr, params.s1_atr_ma_len ?? 14);
+
+  const startBar = Math.max(emaTrendLen, rsiLen, atrLen, 50) + 5;
+  const trades: ReplayTrade[] = [];
+
+  let position = 0; // 0=flat, 1=long, -1=short
+  let entryPrice = 0, entryBar = 0, lastEntryBar = -999;
+  let entrySid = 0;
+
+  for (let i = startBar; i < marketData.length; i++) {
+    const cl = closes[i], hi = highs[i], lo = lows[i], op = marketData[i].open;
+    const rsi = rsiArr[i];
+    const atr = atrArr[i];
+    const e50 = ema50[i], e9 = ema9[i], e21 = ema21[i];
+    const pe9 = ema9[i - 1], pe21 = ema21[i - 1], pe50 = ema50[i - 1];
+
+    if (isNaN(rsi) || isNaN(e9) || isNaN(e21) || isNaN(e50)) continue;
+
+    const spacingOk = i - lastEntryBar >= (params.bars_between_trades ?? 3);
+
+    // S1 — EMA crossover
+    let buy = false, sell = false;
+    if (params.enable_strat1 !== false) {
+      const co21 = pe9 < pe21 && e9 > e21;
+      const co50 = pe9 < pe50 && e9 > e50;
+      const cu21 = pe9 > pe21 && e9 < e21;
+      const cu50 = pe9 > pe50 && e9 < e50;
+      if ((co21 || co50) && rsi > 50 && rsi > (params.rsi_long_entry_min ?? 30)) { buy = true; entrySid = 1; }
+      if ((cu21 || cu50) && rsi < 50 && rsi < (params.rsi_short_entry_max ?? 70)) { sell = true; entrySid = 1; }
+    }
+
+    if (buy && sell) sell = false;
+
+    // RSI exit
+    let exitL = false, exitS = false;
+    const prevRSI = i > 0 ? rsiArr[i - 1] : rsi;
+    if (params.enable_rsi_exit && position === 1) {
+      if (e9 < e21 && prevRSI > (params.rsi_exit_long ?? 70) && rsi < (params.rsi_exit_long ?? 70)) exitL = true;
+    }
+    if (params.enable_rsi_exit && position === -1) {
+      if (e9 > e21 && prevRSI < (params.rsi_exit_short ?? 30) && rsi > (params.rsi_exit_short ?? 30)) exitS = true;
+    }
+
+    // Stop loss check (simplified)
+    let stopHit = false;
+    if (position === 1) {
+      const slPct = (params.stop_distance_percent_long ?? 3) / 100;
+      if (lo <= entryPrice * (1 - slPct)) stopHit = true;
+    } else if (position === -1) {
+      const slPct = (params.stop_distance_percent_short ?? 3) / 100;
+      if (hi >= entryPrice * (1 + slPct)) stopHit = true;
+    }
+
+    // Exit
+    if (position !== 0) {
+      let shouldExit = false, reason = 'signal';
+      if (stopHit) { shouldExit = true; reason = 'stop_loss'; }
+      else if (position === 1 && exitL) { shouldExit = true; reason = 'signal'; }
+      else if (position === -1 && exitS) { shouldExit = true; reason = 'signal'; }
+      else if (position === 1 && sell && params.allow_flip_L2S) { shouldExit = true; reason = 'flip'; }
+      else if (position === -1 && buy && params.allow_flip_S2L) { shouldExit = true; reason = 'flip'; }
+
+      if (shouldExit) {
+        const dir = position === 1 ? 1 : -1;
+        const pnl = ((cl - entryPrice) / entryPrice) * 100 * dir;
+        trades.push({
+          direction: position === 1 ? 'long' : 'short',
+          entry_time: marketData[entryBar].timestamp,
+          entry_price: entryPrice,
+          exit_time: marketData[i].timestamp,
+          exit_price: cl,
+          pnl_pct: Math.round(pnl * 100) / 100,
+          exit_reason: reason,
+          bars_held: i - entryBar,
+          strategy_id: entrySid,
+        });
+        position = 0;
+        // Handle flip
+        if (reason === 'flip') {
+          position = sell ? -1 : 1;
+          entryPrice = cl; entryBar = i; lastEntryBar = i;
+        }
+        continue;
+      }
+    }
+
+    // Entry
+    if (position === 0 && spacingOk) {
+      if (buy) {
+        position = 1; entryPrice = cl; entryBar = i; lastEntryBar = i;
+      } else if (sell) {
+        position = -1; entryPrice = cl; entryBar = i; lastEntryBar = i;
+      }
+    }
+  }
+
+  // Close open trade
+  if (position !== 0) {
+    const last = marketData[marketData.length - 1];
+    const dir = position === 1 ? 1 : -1;
+    const pnl = ((last.close - entryPrice) / entryPrice) * 100 * dir;
+    trades.push({
+      direction: position === 1 ? 'long' : 'short',
+      entry_time: marketData[entryBar].timestamp,
+      entry_price: entryPrice,
+      exit_time: last.timestamp,
+      exit_price: last.close,
+      pnl_pct: Math.round(pnl * 100) / 100,
+      exit_reason: 'end_of_data',
+      bars_held: marketData.length - 1 - entryBar,
+      strategy_id: entrySid,
+    });
+  }
+
+  return trades;
+}
+
 // ── Gap diagnosis ──
 
 interface GapDiagnosis {
@@ -63,49 +232,29 @@ interface GapDiagnosis {
   field: string;
   expected: string;
   actual: string;
-  source: string; // root cause category
-  detail: string; // specific explanation
+  source: string;
+  detail: string;
 }
 
 function diagnoseGap(field: string, expected: string, actual: string, context: Record<string, unknown>): { source: string; detail: string } {
   if (field === 'trade_count') {
-    const exp = parseInt(expected);
-    const act = parseInt(actual);
-    const diff = act - exp;
-    if (context.missingBars && (context.missingBars as number) > 0) {
-      return { source: 'missing_data', detail: `חסרים ${context.missingBars} ברים בנתוני השוק — ייתכן שגרם לדילוג על עסקאות` };
-    }
-    if (Math.abs(diff) <= 3) {
-      return { source: 'boundary_condition', detail: `הפרש קטן (${diff}) — כנראה בגלל תנאי שוליים בתחילת/סוף הטווח` };
-    }
-    return { source: 'logic_divergence', detail: `הפרש גדול (${diff}) — ייתכן הבדל בלוגיקת כניסה/יציאה` };
+    const exp = parseInt(expected), act = parseInt(actual), diff = act - exp;
+    if (context.missingBars && (context.missingBars as number) > 0)
+      return { source: 'missing_data', detail: `חסרים ${context.missingBars} ברים — ייתכן שגרם לדילוג על עסקאות` };
+    if (Math.abs(diff) <= 3)
+      return { source: 'boundary_condition', detail: `הפרש קטן (${diff}) — תנאי שוליים בתחילת/סוף הטווח` };
+    return { source: 'logic_divergence', detail: `הפרש גדול (${diff}) — הבדל בלוגיקת כניסה/יציאה` };
   }
-
-  if (field === 'win_rate') {
-    return { source: 'cumulative_drift', detail: 'הפרש ב-Win Rate נובע מהבדלים בעסקאות בודדות שמצטברים' };
-  }
-
-  if (field === 'entry_price_outside_bar' || field === 'exit_price_outside_bar') {
-    const prices = actual.split('-').map(Number);
-    if (prices.some(isNaN)) {
-      return { source: 'precision', detail: `מחיר ${field === 'entry_price_outside_bar' ? 'כניסה' : 'יציאה'} מחוץ לטווח הבר — ייתכן בעיית עיגול` };
-    }
-    return { source: 'price_mismatch', detail: `מחיר מחוץ לטווח [${expected}], נתון: ${actual}. ייתכן שימוש ב-close במקום limit/stop` };
-  }
-
-  if (field === 'pnl_calculation') {
-    const expPnl = parseFloat(expected);
-    const actPnl = parseFloat(actual);
-    if (Math.abs(expPnl - actPnl) < 1) {
-      return { source: 'precision', detail: 'הפרש קטן ב-P&L — סביר שמקורו בעיגול float' };
-    }
-    return { source: 'calculation_error', detail: `פער משמעותי ב-P&L (${expected} vs ${actual}) — ייתכן שגיאה בנוסחת חישוב` };
-  }
-
-  if (field === 'indicator_rsi' || field === 'indicator_atr' || field === 'indicator_ema') {
-    return { source: 'indicator_divergence', detail: `הבדל בחישוב ${field.replace('indicator_', '').toUpperCase()} — ייתכן הפרש בגלל חלון נתונים שונה` };
-  }
-
+  if (field === 'win_rate')
+    return { source: 'cumulative_drift', detail: 'הפרש ב-Win Rate נובע מהבדלים בעסקאות בודדות' };
+  if (field.includes('price_outside'))
+    return { source: 'price_mismatch', detail: `מחיר מחוץ לטווח הבר — ייתכן שימוש ב-close במקום limit/stop` };
+  if (field === 'pnl_mismatch')
+    return { source: 'calculation_error', detail: `פער ב-P&L (${expected} vs ${actual}) — ייתכן הבדל בעמלות/slippage` };
+  if (field === 'direction_mismatch')
+    return { source: 'logic_divergence', detail: `כיוון שונה — long vs short, הבדל בלוגיקת כניסה` };
+  if (field === 'timing_mismatch')
+    return { source: 'boundary_condition', detail: `הפרש בזמן כניסה/יציאה — ייתכן הבדל ב-bar alignment` };
   return { source: 'unknown', detail: 'פער לא מזוהה — דרוש חקירה ידנית' };
 }
 
@@ -151,9 +300,9 @@ Deno.serve(async (req) => {
     }
 
     const trades = storedTrades || [];
-    const params = result.parameters as Record<string, unknown>;
+    const params = result.parameters as Record<string, any>;
 
-    // 3. Load market data
+    // 3. Load market data for replay
     const { data: marketData, error: mdErr } = await supabase
       .from('market_data')
       .select('timestamp, open, high, low, close, volume')
@@ -169,200 +318,178 @@ Deno.serve(async (req) => {
         actual_trades: 0,
         expected_return: result.test_return || 0,
         actual_return: 0,
+        replay_trades: [],
         discrepancies: [],
         stats: null,
-        message: `לא נמצא מספיק נתוני שוק ל-${result.symbol} (${marketData?.length || 0} ברים). צריך לפחות 50 ברים לאימות.`,
+        message: `לא נמצא מספיק נתוני שוק ל-${result.symbol} (${marketData?.length || 0} ברים). צריך לפחות 50 ברים.`,
       }), {
         status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
 
-    // 4. Compute indicators for cross-reference
-    const closes = marketData.map((b: any) => b.close);
-    const highs = marketData.map((b: any) => b.high);
-    const lows = marketData.map((b: any) => b.low);
-
-    const rsiPeriod = (params.rsi_period as number) || 14;
-    const atrPeriod = (params.atr_period as number) || 14;
-    const emaPeriod = (params.ema_period as number) || 20;
-
-    const rsiValues = calcRSI(closes, rsiPeriod);
-    const atrValues = calcATR(highs, lows, closes, atrPeriod);
-    const emaValues = calcEMA(closes, emaPeriod);
-
-    // Check for missing bars (gaps in timestamps)
+    // Check for missing bars
     let missingBars = 0;
     for (let i = 1; i < marketData.length; i++) {
       const diff = new Date(marketData[i].timestamp).getTime() - new Date(marketData[i - 1].timestamp).getTime();
-      // More than 2 hours gap during trading hours suggests missing bars
-      if (diff > 2 * 60 * 60 * 1000) {
-        missingBars++;
-      }
+      if (diff > 2 * 60 * 60 * 1000) missingBars++;
     }
 
-    // 5. Detailed verification
+    // 4. REPLAY — run strategy with same params on same data
+    const replayTrades = replayStrategy(marketData, params);
+
+    // 5. Compare stored trades vs replay trades
     const discrepancies: GapDiagnosis[] = [];
 
-    const storedTotalPnl = trades.reduce((sum: number, t: any) => sum + (t.pnl_pct || 0), 0);
-    const storedWins = trades.filter((t: any) => t.pnl_pct > 0).length;
-    const storedLosses = trades.filter((t: any) => t.pnl_pct < 0).length;
-    const storedWinRate = trades.length > 0 ? (storedWins / trades.length * 100) : 0;
+    // Trade count comparison
+    if (trades.length > 0 && Math.abs(trades.length - replayTrades.length) > 1) {
+      const diag = diagnoseGap('trade_count', `${trades.length}`, `${replayTrades.length}`, { missingBars });
+      discrepancies.push({ trade_index: -1, field: 'trade_count', expected: `${trades.length} (שמור)`, actual: `${replayTrades.length} (replay)`, ...diag });
+    }
 
-    const expectedReturn = result.test_return || result.train_return || 0;
+    // Compare with optimization_results metadata
     const expectedTrades = result.total_trades || 0;
     const expectedWinRate = result.win_rate || 0;
 
-    // Check trade count match
-    if (expectedTrades > 0 && Math.abs(trades.length - expectedTrades) > 1) {
-      const diag = diagnoseGap('trade_count', `${expectedTrades}`, `${trades.length}`, { missingBars });
-      discrepancies.push({
-        trade_index: -1, field: 'trade_count',
-        expected: `${expectedTrades}`, actual: `${trades.length}`,
-        ...diag,
-      });
+    if (expectedTrades > 0 && Math.abs(replayTrades.length - expectedTrades) > 2) {
+      const diag = diagnoseGap('trade_count', `${expectedTrades}`, `${replayTrades.length}`, { missingBars });
+      discrepancies.push({ trade_index: -1, field: 'replay_vs_metadata_count', expected: `${expectedTrades} (metadata)`, actual: `${replayTrades.length} (replay)`, ...diag });
     }
 
-    // Check win rate match
-    if (expectedWinRate > 0 && Math.abs(storedWinRate - expectedWinRate) > 2) {
-      const diag = diagnoseGap('win_rate', `${expectedWinRate.toFixed(1)}%`, `${storedWinRate.toFixed(1)}%`, {});
-      discrepancies.push({
-        trade_index: -1, field: 'win_rate',
-        expected: `${expectedWinRate.toFixed(1)}%`, actual: `${storedWinRate.toFixed(1)}%`,
-        ...diag,
-      });
+    // Per-trade comparison (stored vs replay)
+    const compareLen = Math.min(trades.length, replayTrades.length, 100);
+    for (let i = 0; i < compareLen; i++) {
+      const stored = trades[i] as any;
+      const replay = replayTrades[i];
+
+      // Direction mismatch
+      if (stored.direction !== replay.direction) {
+        const diag = diagnoseGap('direction_mismatch', stored.direction, replay.direction, {});
+        discrepancies.push({ trade_index: i + 1, field: 'direction', expected: stored.direction, actual: replay.direction, ...diag });
+      }
+
+      // Entry price comparison (within 0.5%)
+      if (stored.entry_price && replay.entry_price) {
+        const priceDiff = Math.abs(stored.entry_price - replay.entry_price) / stored.entry_price * 100;
+        if (priceDiff > 0.5) {
+          discrepancies.push({
+            trade_index: i + 1, field: 'entry_price',
+            expected: `${stored.entry_price.toFixed(2)}`, actual: `${replay.entry_price.toFixed(2)}`,
+            source: 'price_mismatch', detail: `הפרש ${priceDiff.toFixed(2)}% במחיר כניסה`,
+          });
+        }
+      }
+
+      // PnL comparison
+      if (stored.pnl_pct !== null && replay.pnl_pct !== null) {
+        const pnlDiff = Math.abs(stored.pnl_pct - replay.pnl_pct);
+        if (pnlDiff > 0.5) {
+          const diag = diagnoseGap('pnl_mismatch', `${stored.pnl_pct.toFixed(2)}%`, `${replay.pnl_pct.toFixed(2)}%`, {});
+          discrepancies.push({ trade_index: i + 1, field: 'pnl_pct', expected: `${stored.pnl_pct.toFixed(2)}%`, actual: `${replay.pnl_pct.toFixed(2)}%`, ...diag });
+        }
+      }
+
+      // Timing comparison
+      if (stored.entry_time && replay.entry_time) {
+        const timeDiff = Math.abs(new Date(stored.entry_time).getTime() - new Date(replay.entry_time).getTime());
+        if (timeDiff > 30 * 60 * 1000) { // > 30 min
+          const diag = diagnoseGap('timing_mismatch', stored.entry_time, replay.entry_time, {});
+          discrepancies.push({ trade_index: i + 1, field: 'entry_time', expected: stored.entry_time, actual: replay.entry_time, ...diag });
+        }
+      }
     }
 
-    // 6. Per-trade verification with indicator cross-reference
-    for (let i = 0; i < Math.min(trades.length, 100); i++) {
-      const trade = trades[i] as any;
-
-      // Find matching bar for entry
-      const entryBarIdx = marketData.findIndex((bar: any) => {
+    // Also verify replay trades against market data bars
+    for (let i = 0; i < Math.min(replayTrades.length, 100); i++) {
+      const rt = replayTrades[i];
+      const entryBarIdx = marketData.findIndex(bar => {
         const barTime = new Date(bar.timestamp).getTime();
-        const tradeTime = new Date(trade.entry_time).getTime();
+        const tradeTime = new Date(rt.entry_time).getTime();
         return Math.abs(barTime - tradeTime) < 60 * 15 * 1000;
       });
-
       if (entryBarIdx >= 0) {
-        const entryBar = marketData[entryBarIdx] as any;
-        // Price within bar range check
-        if (trade.entry_price < entryBar.low * 0.999 || trade.entry_price > entryBar.high * 1.001) {
-          const diag = diagnoseGap('entry_price_outside_bar',
-            `${entryBar.low.toFixed(2)}-${entryBar.high.toFixed(2)}`,
-            `${trade.entry_price.toFixed(2)}`, {});
-          discrepancies.push({ trade_index: i + 1, field: 'entry_price_outside_bar', expected: `${entryBar.low.toFixed(2)}-${entryBar.high.toFixed(2)}`, actual: `${trade.entry_price.toFixed(2)}`, ...diag });
-        }
-
-        // Cross-reference indicators at entry point
-        if (entryBarIdx < rsiValues.length) {
-          const rsiAtEntry = rsiValues[entryBarIdx];
-          const atrAtEntry = atrValues[entryBarIdx];
-          const emaAtEntry = emaValues[entryBarIdx];
-
-          // Sanity check: for long entries, RSI should generally not be overbought
-          if (trade.direction === 'long' && rsiAtEntry > 85) {
-            discrepancies.push({
-              trade_index: i + 1, field: 'indicator_rsi',
-              expected: `RSI < 85 ל-long`, actual: `RSI=${rsiAtEntry.toFixed(1)}`,
-              source: 'indicator_anomaly',
-              detail: `כניסה long כש-RSI=${rsiAtEntry.toFixed(1)} — חריג, ייתכן שהאסטרטגיה משתמשת בלוגיקה שונה`
-            });
-          }
-          if (trade.direction === 'short' && rsiAtEntry < 15) {
-            discrepancies.push({
-              trade_index: i + 1, field: 'indicator_rsi',
-              expected: `RSI > 15 ל-short`, actual: `RSI=${rsiAtEntry.toFixed(1)}`,
-              source: 'indicator_anomaly',
-              detail: `כניסה short כש-RSI=${rsiAtEntry.toFixed(1)} — חריג`
-            });
-          }
-        }
-      }
-
-      // Exit verification
-      if (trade.exit_time && trade.exit_price) {
-        const exitBarIdx = marketData.findIndex((bar: any) => {
-          const barTime = new Date(bar.timestamp).getTime();
-          const tradeTime = new Date(trade.exit_time).getTime();
-          return Math.abs(barTime - tradeTime) < 60 * 15 * 1000;
-        });
-
-        if (exitBarIdx >= 0) {
-          const exitBar = marketData[exitBarIdx] as any;
-          if (trade.exit_price < exitBar.low * 0.999 || trade.exit_price > exitBar.high * 1.001) {
-            const diag = diagnoseGap('exit_price_outside_bar',
-              `${exitBar.low.toFixed(2)}-${exitBar.high.toFixed(2)}`,
-              `${trade.exit_price.toFixed(2)}`, {});
-            discrepancies.push({ trade_index: i + 1, field: 'exit_price_outside_bar', expected: `${exitBar.low.toFixed(2)}-${exitBar.high.toFixed(2)}`, actual: `${trade.exit_price.toFixed(2)}`, ...diag });
-          }
-        }
-
-        // Verify P&L calculation
-        const expectedPnl = trade.direction === 'long'
-          ? ((trade.exit_price - trade.entry_price) / trade.entry_price) * 100
-          : ((trade.entry_price - trade.exit_price) / trade.entry_price) * 100;
-
-        if (Math.abs(expectedPnl - trade.pnl_pct) > 0.5) {
-          const diag = diagnoseGap('pnl_calculation', `${expectedPnl.toFixed(2)}%`, `${trade.pnl_pct.toFixed(2)}%`, {});
-          discrepancies.push({ trade_index: i + 1, field: 'pnl_calculation', expected: `${expectedPnl.toFixed(2)}%`, actual: `${trade.pnl_pct.toFixed(2)}%`, ...diag });
+        const bar = marketData[entryBarIdx];
+        if (rt.entry_price < bar.low * 0.999 || rt.entry_price > bar.high * 1.001) {
+          discrepancies.push({
+            trade_index: i + 1, field: 'replay_entry_outside_bar',
+            expected: `${bar.low.toFixed(2)}-${bar.high.toFixed(2)}`,
+            actual: `${rt.entry_price.toFixed(2)}`,
+            source: 'price_mismatch',
+            detail: `מחיר כניסה של ה-replay מחוץ לטווח הבר`,
+          });
         }
       }
     }
 
-    // 7. Compute extended stats
-    const pnlValues = trades.map((t: any) => t.pnl_pct || 0);
-    const avgWin = storedWins > 0 ? pnlValues.filter(p => p > 0).reduce((a, b) => a + b, 0) / storedWins : 0;
-    const avgLoss = storedLosses > 0 ? pnlValues.filter(p => p < 0).reduce((a, b) => a + b, 0) / storedLosses : 0;
+    // 6. Stats from replay
+    const replayPnl = replayTrades.reduce((sum, t) => sum + t.pnl_pct, 0);
+    const replayWins = replayTrades.filter(t => t.pnl_pct > 0).length;
+    const replayLosses = replayTrades.filter(t => t.pnl_pct < 0).length;
+    const replayWR = replayTrades.length > 0 ? (replayWins / replayTrades.length * 100) : 0;
+    const avgWin = replayWins > 0 ? replayTrades.filter(t => t.pnl_pct > 0).reduce((a, t) => a + t.pnl_pct, 0) / replayWins : 0;
+    const avgLoss = replayLosses > 0 ? replayTrades.filter(t => t.pnl_pct < 0).reduce((a, t) => a + t.pnl_pct, 0) / replayLosses : 0;
 
-    // Max consecutive wins/losses
+    // Streaks
     let maxWinStreak = 0, maxLossStreak = 0, curWin = 0, curLoss = 0;
-    for (const p of pnlValues) {
-      if (p > 0) { curWin++; curLoss = 0; maxWinStreak = Math.max(maxWinStreak, curWin); }
-      else if (p < 0) { curLoss++; curWin = 0; maxLossStreak = Math.max(maxLossStreak, curLoss); }
-      else { curWin = 0; curLoss = 0; }
+    for (const t of replayTrades) {
+      if (t.pnl_pct > 0) { curWin++; curLoss = 0; maxWinStreak = Math.max(maxWinStreak, curWin); }
+      else { curLoss++; curWin = 0; maxLossStreak = Math.max(maxLossStreak, curLoss); }
     }
 
-    // Max drawdown
+    // Max DD
     let peak = 0, maxDD = 0, equity = 0;
-    for (const p of pnlValues) {
-      equity += p;
+    for (const t of replayTrades) {
+      equity += t.pnl_pct;
       if (equity > peak) peak = equity;
       const dd = peak - equity;
       if (dd > maxDD) maxDD = dd;
     }
 
     // Profit factor
-    const grossProfit = pnlValues.filter(p => p > 0).reduce((a, b) => a + b, 0);
-    const grossLoss = Math.abs(pnlValues.filter(p => p < 0).reduce((a, b) => a + b, 0));
+    const grossProfit = replayTrades.filter(t => t.pnl_pct > 0).reduce((a, t) => a + t.pnl_pct, 0);
+    const grossLoss = Math.abs(replayTrades.filter(t => t.pnl_pct < 0).reduce((a, t) => a + t.pnl_pct, 0));
     const profitFactor = grossLoss > 0 ? grossProfit / grossLoss : grossProfit > 0 ? Infinity : 0;
 
-    // Sharpe (simplified — daily-ish)
-    const mean = pnlValues.length > 0 ? pnlValues.reduce((a, b) => a + b, 0) / pnlValues.length : 0;
-    const variance = pnlValues.length > 1 ? pnlValues.reduce((a, p) => a + (p - mean) ** 2, 0) / (pnlValues.length - 1) : 0;
+    // Sharpe
+    const mean = replayTrades.length > 0 ? replayPnl / replayTrades.length : 0;
+    const variance = replayTrades.length > 1 ? replayTrades.reduce((a, t) => a + (t.pnl_pct - mean) ** 2, 0) / (replayTrades.length - 1) : 0;
     const sharpe = variance > 0 ? (mean / Math.sqrt(variance)) * Math.sqrt(252) : 0;
 
-    // Gap summary by source
+    // Gap summary
     const gapSummary: Record<string, number> = {};
     for (const d of discrepancies) {
       gapSummary[d.source] = (gapSummary[d.source] || 0) + 1;
     }
 
+    // Stored trades stats (for comparison)
+    const storedPnl = trades.reduce((sum: number, t: any) => sum + (t.pnl_pct || 0), 0);
+    const storedWins = trades.filter((t: any) => t.pnl_pct > 0).length;
+    const storedWR = trades.length > 0 ? (storedWins / trades.length * 100) : 0;
+
     const isMatch = discrepancies.length === 0;
-    const message = isMatch
-      ? `✅ ${trades.length} עסקאות נבדקו — כולן תואמות. תשואה: ${storedTotalPnl.toFixed(1)}%, WR: ${storedWinRate.toFixed(0)}%, Sharpe: ${sharpe.toFixed(2)}`
-      : `⚠️ ${discrepancies.length} פערים ב-${trades.length} עסקאות. תשואה: ${storedTotalPnl.toFixed(1)}%, WR: ${storedWinRate.toFixed(0)}%`;
+    const hasStoredTrades = trades.length > 0;
+
+    let message: string;
+    if (!hasStoredTrades) {
+      message = `🔄 אין עסקאות שמורות. ה-replay מצא ${replayTrades.length} עסקאות עם תשואה ${replayPnl.toFixed(1)}%, WR: ${replayWR.toFixed(0)}%, Sharpe: ${sharpe.toFixed(2)}`;
+    } else if (isMatch) {
+      message = `✅ ${trades.length} עסקאות שמורות תואמות ל-replay (${replayTrades.length}). תשואה: ${storedPnl.toFixed(1)}%, Sharpe: ${sharpe.toFixed(2)}`;
+    } else {
+      message = `⚠️ ${discrepancies.length} פערים בין ${trades.length} שמורות ל-${replayTrades.length} replay. שמור: ${storedPnl.toFixed(1)}%, replay: ${replayPnl.toFixed(1)}%`;
+    }
 
     return new Response(JSON.stringify({
       match: isMatch,
-      expected_trades: expectedTrades,
-      actual_trades: trades.length,
-      expected_return: expectedReturn,
-      actual_return: storedTotalPnl,
+      has_stored_trades: hasStoredTrades,
+      expected_trades: hasStoredTrades ? trades.length : expectedTrades,
+      actual_trades: replayTrades.length,
+      expected_return: hasStoredTrades ? storedPnl : (result.test_return || result.train_return || 0),
+      actual_return: replayPnl,
+      replay_trades: replayTrades.slice(0, 50), // Send first 50 for UI display
       discrepancies,
       gap_summary: gapSummary,
       stats: {
-        total_pnl: storedTotalPnl,
-        win_rate: storedWinRate,
+        total_pnl: replayPnl,
+        win_rate: replayWR,
         avg_win: avgWin,
         avg_loss: avgLoss,
         max_win_streak: maxWinStreak,
@@ -370,10 +497,13 @@ Deno.serve(async (req) => {
         max_drawdown: maxDD,
         profit_factor: profitFactor,
         sharpe,
-        total_trades: trades.length,
-        wins: storedWins,
-        losses: storedLosses,
+        total_trades: replayTrades.length,
+        wins: replayWins,
+        losses: replayLosses,
         missing_bars: missingBars,
+        stored_total_pnl: storedPnl,
+        stored_win_rate: storedWR,
+        stored_count: trades.length,
       },
       message,
     }), {
