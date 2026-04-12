@@ -442,11 +442,24 @@ export const SmartOptimizationProgressCard: React.FC<SmartOptimizationProgressPr
               <div className="h-full bg-gradient-to-r from-purple-600 to-purple-400 transition-all duration-300" style={{ width: `${stageProgressPct}%` }} />
             </div>
             <div className="flex items-center justify-between mt-2 text-xs text-muted-foreground">
-              <span>מהירות: {speed.toFixed(1)} קומבינציות/שניה</span>
-              {estimatedTimeRemaining && (
-                <span>זמן משוער: {formatTime(estimatedTimeRemaining)} דקות</span>
+              <span>מהירות: {speed > 0 ? `${speed.toFixed(0)} קומבינציות/שניה` : 'ממתין...'}</span>
+              {estimatedTimeRemaining && speed > 0 && (
+                <span>זמן משוער: {formatTime(estimatedTimeRemaining)}</span>
               )}
             </div>
+            {isRunning && !preRunMode && serverStatus !== 'active' && serverStatus !== 'idle' && (
+              <div className={cn(
+                "mt-2 text-xs font-medium text-right px-3 py-2 rounded-lg border",
+                serverStatus === 'stalled' 
+                  ? "bg-red-500/10 border-red-500/30 text-red-400"
+                  : "bg-amber-500/10 border-amber-500/30 text-amber-400"
+              )}>
+                {serverStatus === 'stalled' 
+                  ? `⚠️ השרת לא עדכן כבר ${Math.floor(secondsSinceLastUpdate)}s — ייתכן שהריצה תקועה`
+                  : `⏳ ממתין לעדכון מהשרת (${Math.floor(secondsSinceLastUpdate)}s)...`
+                }
+              </div>
+            )}
           </div>
           {isRunning && (
             <Button variant="outline" size="sm" onClick={onSkipStage} className="w-full gap-2">
