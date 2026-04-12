@@ -8,6 +8,23 @@ import type {
 } from './types';
 import { runPortfolioBacktest, preFilterSymbols, PreFilteredSymbolData } from './portfolioSimulator';
 import { IndicatorCacheManager } from './indicatorCache';
+
+/** Insert into a sorted-descending top-N array, maintaining max size */
+function insertTopN(
+  arr: Array<{ params: ExtendedStocksStrategyParameters; trainReturn: number }>,
+  item: { params: ExtendedStocksStrategyParameters; trainReturn: number },
+  maxN: number
+) {
+  if (arr.length >= maxN && item.trainReturn <= arr[arr.length - 1].trainReturn) return;
+  // Binary insert
+  let lo = 0, hi = arr.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (arr[mid].trainReturn > item.trainReturn) lo = mid + 1; else hi = mid;
+  }
+  arr.splice(lo, 0, item);
+  if (arr.length > maxN) arr.length = maxN;
+}
 import { createEmptyMultiObjectiveResult, updateMultiObjectiveResult } from './multiObjectiveMetrics';
 import { getMinConstraint } from './parameterValidation';
 
@@ -181,7 +198,7 @@ export async function optimizePortfolio(
       const cached = combinationCache.get(key)!;
       cacheHits++;
       if (cached.trainReturn > bestTrainReturn) { bestTrainReturn = cached.trainReturn; bestTestReturn = cached.testReturn; }
-      if (collectAllResults) allResults.push({ params, trainReturn: cached.trainReturn });
+      if (collectAllResults) insertTopN(allResults, { params, trainReturn: cached.trainReturn }, 200);
       current++;
     } else {
       const result = runPortfolioBacktest(symbolsData, params, periodSplit, mode, simConfig, preFiltered, indicatorCache);
@@ -204,7 +221,7 @@ export async function optimizePortfolio(
             strategyEnables: { enable_strat1: params.enable_strat1, enable_strat2: params.enable_strat2, enable_strat3: params.enable_strat3, enable_strat4: params.enable_strat4, enable_strat5: params.enable_strat5 },
           });
         }
-        if (collectAllResults) allResults.push({ params, trainReturn: result.totalTrainReturn });
+        if (collectAllResults) insertTopN(allResults, { params, trainReturn: result.totalTrainReturn }, 200);
       }
     }
 

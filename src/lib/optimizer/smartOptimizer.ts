@@ -341,6 +341,7 @@ export async function runSmartOptimization(
 
   let activeCombination: { strat1: boolean; strat2: boolean; strat3: boolean; strat4: boolean; strat5: boolean } | null = null;
 
+  let prevRound = 0;
   for (let si = 0; si < stages.length; si++) {
     if (abortSignal?.aborted) break;
 
@@ -349,6 +350,26 @@ export async function runSmartOptimization(
 
     const stage = stages[si];
     const stageStart = Date.now();
+
+    // Memory cleanup at round boundaries
+    if (stage.roundNumber !== prevRound) {
+      // Free round1Zones after Round 2 — no longer needed
+      if (stage.roundNumber >= 3 && Object.keys(round1Zones).length > 0) {
+        for (const key in round1Zones) delete round1Zones[key];
+        console.log('🧹 Freed round1Zones memory');
+      }
+      // Evict non-protected cache entries between rounds
+      if (prevRound > 0) {
+        let evicted = 0;
+        for (const [key, entry] of cache) {
+          if (!(entry as any).protected) { cache.delete(key); evicted++; }
+        }
+        console.log(`🧹 Evicted ${evicted} non-protected cache entries at round boundary`);
+      }
+      // Clear indicator cache between rounds to free float arrays
+      indicatorCache.clear();
+      prevRound = stage.roundNumber;
+    }
 
     console.log(`\n▶ Stage ${si + 1}/${stages.length}: ${stage.name} (Round ${stage.roundNumber})`);
 
@@ -506,9 +527,12 @@ export async function runSmartOptimization(
         globalResult = updateMultiObjectiveResult(globalResult, result.bestForProfit);
         markBestCacheEntryProtected(cache, si + 1, stage.roundNumber);
 
-        // Save Round 1 results for zone-based tuning in Round 2
+        // Save Round 1 results for zone-based tuning in Round 2 (top 200 only to save memory)
         if (collectAll && result.allTestedResults) {
-          round1Zones[si] = result.allTestedResults;
+          const sorted = result.allTestedResults
+            .sort((a: any, b: any) => b.trainReturn - a.trainReturn)
+            .slice(0, 200);
+          round1Zones[si] = sorted;
         }
 
         stageResults.push({
