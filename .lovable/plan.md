@@ -1,40 +1,29 @@
 
 
-## הבעיה: 24.41B קומבינציות — באג בשרת, לא ב-UI
+## תיקון מספרים ארוכים + פונט + הוספת מהירות ממוצעת
 
-### ניתוח
-בדקתי את ה-DB. ההרצות האחרונות (#40-#42) מדווחות `total_combos = 24,414,062,500` (24.41 מיליארד). לעומת זאת, הרצות #38-#39 שהצליחו הראו `total_combos = 16,236`.
+### בעיות שזוהו
 
-**המספר 24.41B נראה כמו מכפלה** של כל הקומבינציות בכל השלבים (multiply) במקום **סכום** (sum). השרת כנראה עושה:
-```
-total = stage1_combos × stage2_combos × stage3_combos × ...
-```
-במקום:
-```
-total = stage1_combos + stage2_combos + stage3_combos + ...
-```
+1. **מספרים ארוכים** — WR מציג `73.33333333333333%` במקום `73.3%`, DD מציג `76.47058823529411%` במקום `76.5%`
+2. **פונט** — `font-mono` (JetBrains Mono) משמש לכל המספרים והטקסט באנגלית. המשתמש רוצה פונט רגיל (Inter/Heebo)
+3. **חסר** — ממוצע קומבינציות/שניה לכל הריצה
 
-### מה צריך לתקן
-
-**בשרת Railway** — למצוא את המקום שמחשב `total_combos` ולשנות מ-multiply ל-sum. כל שלב רץ **בנפרד** אז הסכום הכולל הוא **סכום** ולא מכפלה.
-
-### מה לתקן ב-Lovable (UI)
-
-1. **Runtime error** — יש שגיאת `REALISTIC_MAX_TOTAL is not defined` מ-build ישן. צריך לוודא שה-build נקי (כנראה יספיק rebuild).
-
-2. **Safety cap ב-UI** — להוסיף cap של 2,000,000 כ-safety net בצד ה-UI, כדי שגם אם השרת שולח מספר מטורף, ה-UI לא יציג 24 מיליארד:
-
-```typescript
-const totalCombos = Math.min(run.total_combos || 0, 2_000_000);
-```
-
-### קבצים
+### שינויים
 
 | קובץ | שינוי |
 |---|---|
-| `src/stores/optimizationStore.ts` | הוספת safety cap של 2M על totalCombos |
-| שרת Railway | תיקון חישוב total_combos מ-multiply ל-sum |
+| `src/pages/Backtest.tsx` | עיגול `win_rate` ו-`agent_confidence` ל-1 ספרה, הסרת `font-mono` מכל העמודות |
+| `src/components/backtest/OptimizationProgress.tsx` | הסרת `font-mono` מכל הטקסטים (מספרים, Train/Test, combos), הוספת שורת "ממוצע קומבינציות/שניה" שמחושבת כ-`total_current / elapsedTime` |
 
-### הנחיה לשרת Railway
-אתן לך את השורה לשנות בשרת — תצטרך לחפש איפה מחושב `total_combos` ולהחליף מ-`reduce((a,b) => a*b)` ל-`reduce((a,b) => a+b)`.
+### פירוט
+
+**Backtest.tsx — טבלת תוצאות (שורות 221-231):**
+- `win_rate`: שינוי מ-`{o.win_rate || 0}%` ל-`{(o.win_rate || 0).toFixed(1)}%`
+- `agent_confidence`: כבר יש `toFixed(0)` — תקין
+- `max_drawdown`: כבר יש `toFixed(0)` — תקין  
+- הסרת `font-mono` מכל ה-spans בטבלה
+
+**OptimizationProgress.tsx:**
+- הסרת כל ה-`font-mono` classes מהקומפוננט (שורות 155, 159, 382, 400, 417, 420, 441, 455, 466, 500, 503, 521, 528)
+- הוספת שורה חדשה ליד "מהירות" שמציגה: `ממוצע כללי: X קומבינציות/שניה` — מחושב כ-`overallCombinations.current / elapsedTime`
 
