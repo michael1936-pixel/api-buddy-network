@@ -1,31 +1,23 @@
 
 
-## איפה לערוך את הקבצים — הסבר מלא
+## יצירת קבצי Patch להורדה
 
-### הרקע
-יש לך **שני פרויקטים נפרדים**:
-1. **הפרויקט הזה** (Lovable) — הפרונט-אנד, דף Backtest, UI
-2. **algomaykl-optimizer** (GitHub → Railway) — השרת שמריץ את האופטימיזציה בפועל
+הקבצים הקודמים נמחקו (היו ב-`/tmp`). אצור אותם מחדש כקבצים להורדה ב-`/mnt/documents/`.
 
-הקריסה קורית ב-**שרת Railway**, לא פה. לכן צריך לערוך קבצים ב-repo של GitHub.
+### מה ייווצר
 
-### צעדים מדויקים
+קבצים שתוריד למחשב ותעתיק לתוך ה-repo של Railway:
 
-**שלב 1 — פתח את ה-repo ב-GitHub**
-- לך ל-GitHub שלך
-- חפש repo בשם `algomaykl-optimizer`
-- או לחץ על שם ה-repo בראש דף Railway (ליד הכפתור Active בצילום שלך)
+1. **`/mnt/documents/railway-patch/serverLogger.ts`** — מודול שכותב לוגים לטבלת `optimization_run_logs` (heap, stage, combo)
+2. **`/mnt/documents/railway-patch/memoryGuard.ts`** — מוניטור זיכרון שעוצר בצורה נשלטת לפני OOM
+3. **`/mnt/documents/railway-patch/indicatorCache-fix.ts`** — תיקון cache key עם dataset identity
+4. **`/mnt/documents/railway-patch/README.md`** — הוראות: איזה קובץ לשים איפה ב-repo
 
-**שלב 2 — תראה לי את מבנה הקבצים**
-- צלם screenshot של רשימת הקבצים ב-root של ה-repo
-- ככה אדע בדיוק איפה כל קובץ נמצא ואכתוב לך את השינויים המדויקים
+### תהליך העבודה שלך אחרי ההורדה
 
-**שלב 3 — עריכה**
-אפשרות א: **ישירות ב-GitHub** — לחץ על קובץ → עיפרון (Edit) → שנה → Commit
-אפשרות ב: **מקומית** — `git clone` → ערוך → `git push`
-
-אחרי push, Railway עושה deploy אוטומטי (כמו שראית בצילום).
-
-### מה אני צריך ממך
-**צלם screenshot של רשימת הקבצים ב-GitHub repo** של `algomaykl-optimizer` — ואז אכתוב לך בדיוק איזה קובץ לפתוח ומה לשנות, שורה בשורה.
+1. הורד את הקבצים מ-Lovable (יופיעו בתפריט Files)
+2. פתח את תיקיית `algomaykl-optimizer` במחשב
+3. העתק את הקבצים לפי ה-README
+4. `git add . && git commit -m "patch" && git push`
+5. Railway יעשה deploy אוטומטי
 
