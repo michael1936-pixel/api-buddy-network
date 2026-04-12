@@ -527,6 +527,41 @@ export async function runSmartOptimization(
       stageCfg = expandConfigForStage(stage, baseConfig, bestParams);
     }
 
+    // ═══ COMBO GUARD: dynamically reduce tuneRange if fine-tune/zone config is too large ═══
+    {
+      const MAX_STAGE_COMBOS = 5000;
+      const numericKeys = stage.parametersToOptimize.filter(k => !BOOLEAN_PARAMS_SET.has(k));
+      const boolCount = stage.parametersToOptimize.filter(k => BOOLEAN_PARAMS_SET.has(k)).length;
+
+      const countCombos = (cfg: ExtendedStocksOptimizationConfig): number => {
+        let c = Math.pow(2, boolCount);
+        for (const key of numericKeys) {
+          const val = (cfg as any)[key];
+          if (val?.values?.length) c *= val.values.length;
+          else if (val && typeof val === 'object' && 'min' in val && 'max' in val && 'step' in val) {
+            c *= Math.max(1, Math.floor((val.max - val.min) / val.step) + 1);
+          }
+        }
+        return c;
+      };
+
+      let combos = countCombos(stageCfg);
+      if (combos > MAX_STAGE_COMBOS) {
+        // Try reducing tuneRange from 2 → 1 → 0
+        let tr = 2;
+        while (combos > MAX_STAGE_COMBOS && tr > 0) {
+          tr--;
+          stageCfg = createFineTuneConfig(baseConfig, bestParams, stage.parametersToOptimize, tr);
+          combos = countCombos(stageCfg);
+          console.log(`⚠ Combo guard: tuneRange=${tr} → ${combos} combos`);
+        }
+        // If still too many (all locked params expanded by ±0 = 1 each, shouldn't happen), log it
+        if (combos > MAX_STAGE_COMBOS) {
+          console.log(`⚠ Combo guard: still ${combos} combos at tuneRange=0, proceeding with caution`);
+        }
+      }
+    }
+
     // Set strategy enables from stage config
     if (stage.enabledStrategies) {
       stageCfg.enable_strat1 = stage.enabledStrategies.strat1;
