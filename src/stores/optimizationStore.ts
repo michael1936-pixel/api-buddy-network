@@ -435,7 +435,9 @@ function startPollingQueue(
   }, 1000);
 
   pollTimer = setInterval(async () => {
-    const { isRunning } = get();
+    const state = get();
+    if (!state) { stopPolling(); return; }
+    const { isRunning } = state;
     if (!isRunning) { stopPolling(); return; }
 
     // Poll all runs at once
