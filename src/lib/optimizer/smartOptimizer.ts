@@ -385,6 +385,13 @@ export async function runSmartOptimization(
       }
     }
 
+    // Aggressive cache limit for Round 2/3 stages (indicator-heavy, low reuse value)
+    if (stage.roundNumber >= 2) {
+      indicatorCache.setMaxSize(5); // Much smaller cache for fine-tuning stages
+    } else {
+      indicatorCache.setMaxSize(50); // Normal cache for Round 1
+    }
+
     console.log(`\n▶ Stage ${si + 1}/${stages.length}: ${stage.name} (Round ${stage.roundNumber})`);
 
     // Apply winning combination strategies to Round 3 stages
