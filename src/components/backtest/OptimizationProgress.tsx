@@ -53,6 +53,7 @@ interface SmartOptimizationProgressProps {
   serverStatus?: 'active' | 'slow' | 'stalled' | 'idle';
   secondsSinceLastUpdate?: number;
   lastServerUpdateAt?: string | null;
+  optimizerBuild?: string | null;
 }
 
 // Dynamic: compute round boundaries from actual stage data
@@ -265,7 +266,8 @@ export const SmartOptimizationProgressCard: React.FC<SmartOptimizationProgressPr
   onSkipStage, onStop, elapsedTime, isRunning, enabledStages, onStageToggle,
   stageProgress: stageProgressMap, preRunMode = false, overallCombinations, 
   combinationsPerSecond, symbol, bestTrainReturn, bestTestReturn, stageEstimates,
-  serverStatus = 'idle', secondsSinceLastUpdate = 0, lastServerUpdateAt
+  serverStatus = 'idle', secondsSinceLastUpdate = 0, lastServerUpdateAt,
+  optimizerBuild
 }) => {
   const overallProgress = useMemo(() => {
     const enabledCount = enabledStages.filter(Boolean).length;
