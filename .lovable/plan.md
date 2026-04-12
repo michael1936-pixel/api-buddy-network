@@ -1,18 +1,40 @@
 
 
-# שליחת תיקיית הפרויקט המעודכנת
+# תיקון: COMBO GUARD הורס את S1 customRanges
 
-## מה אעשה
+## הבעיה
 
-1. אחליף את `optimizer/smartOptimizer.ts` בתיקיית `algomaykl-optimizer` בגרסה המעודכנת (עם תיקון S1 custom ranges)
-2. אארוז מחדש את כל התיקייה כ-ZIP
-3. תוריד, תמחק את התיקייה הישנה ב-Railway, תחליף בחדשה, ו-`git push`
+ב-`smartOptimizer.ts` שורה 563 יש:
+```text
+const MAX_STAGE_COMBOS = 5000;
+```
 
-## הקובץ היחיד שמשתנה
+זה רץ על **כל** שלב, כולל S1 עם ה-customRanges שתכננו ל-373K. כשהוא מזהה 373K > 5000, הוא מחליף את הקונפיג ב-`createFineTuneConfig(tuneRange=0)` — ובכך מוריד את הכל ל-1 ערך לפרמטר.
+
+## הפתרון
+
+שורה אחת — לדלג על הCombo Guard כשלשלב יש `customRanges`:
+
+```typescript
+// Before the guard check, skip if stage has custom ranges (intentionally designed combo count)
+if (combos > MAX_STAGE_COMBOS && !stage.customRanges) {
+```
+
+במקום:
+```typescript
+if (combos > MAX_STAGE_COMBOS) {
+```
+
+## קבצים לעדכון
 
 | קובץ | שינוי |
 |-------|-------|
-| `optimizer/smartOptimizer.ts` | 626 שורות → 729 שורות (S1 custom ranges + R2 fine-tune) |
+| `src/lib/optimizer/smartOptimizer.ts` | שורה ~590: הוסף `&& !stage.customRanges` לתנאי הguard |
+| `/mnt/documents/algomaykl-optimizer/` | אותו שינוי + ZIP חדש להעלאה ל-Railway |
 
-שאר הקבצים (server.ts, worker, memoryGuard, serverLogger וכו') — נשארים כמו שהם.
+## תוצאה
+
+- S1 R1: ירוץ עם 373K קומבינציות כמתוכנן
+- שאר השלבים: Guard ממשיך לפעול רגיל (מגביל ל-5000)
+- R2 S1 (isFinalTuning): לא מושפע כי הGuard בודק אחרי יצירת הconfig
 
