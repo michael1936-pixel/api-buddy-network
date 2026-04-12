@@ -1,73 +1,104 @@
 
-הבעיה שראיתי עכשיו היא לא רק "מהירות תצוגה" אלא בעיקר תקיעה של עדכוני השרת:
 
-- מהלוגים של הרשת ה־UI כן עושה polling כל 2 שניות.
-- אבל אותה שורה של `optimization_runs` חוזרת שוב ושוב בלי שינוי:
-  - `current_stage = 2`
-  - `current_combo = 7460`
-  - `total_combos = 36000`
-  - `updated_at = 00:11:44`
-- כלומר מבחינת הלקוח שום דבר חדש לא מגיע מהשרת במשך דקות. לכן זה נראה "תקוע" בצדק.
+# תיקון OOM בלי להוריד מספר קומבינציות
 
-מה זה אומר בפועל:
-1. יש בעיית backend/progress update בשרת החיצוני שמריץ את האופטימיזציה, לא רק בעיית UI.
-2. בנוסף יש גם בעיית UX ב־UI:
-   - `optimizationStore.ts` מעדכן מהירות רק אם `dc > 0`
-   - אם השרת לא מתקדם או עסוק זמן רב בתוך קומבינציה כבדה, המהירות האחרונה נשארת/נופלת בצורה מטעה
-   - אין אינדיקציה ברורה ש"השרת לא שלח עדכון כבר X זמן"
+## הבעיה
+השרת קורס ב-OOM (V8 FatalProcessOutOfMemory) כי שלושה מבני נתונים גדלים ללא הגבלה:
 
-מה אבנה אחרי אישור:
+1. **`round1Zones`** (שורה 340) — שומר את **כל** התוצאות מ-Round 1 (`collectAll = true`). לדוגמה 36,000 קומבינציות × אובייקט params מלא = עשרות MB
+2. **`CombinationCache`** (שורה 335) — מצטבר לאורך כל 30 השלבים, לעולם לא מתנקה
+3. **`IndicatorCacheManager`** (שורה 337) — שומר חישובי אינדיקטורים לכל שילוב פרמטרים ייחודי
 
-1. תיקון UI למהירות וסטטוס תקיעה
-- ב־`src/stores/optimizationStore.ts`
-  - לשנות את חישוב `combinationsPerSecond` כך שכאשר `dc === 0` הוא ירד ל־0 או יעבור למצב idle במקום להישאר על ערך ישן
-  - לשמור `lastServerUpdateAt` לפי `run.updated_at`
-  - לחשב `secondsSinceLastUpdate`
-- ב־`src/components/backtest/OptimizationProgress.tsx`
-  - להציג "מעדכן..." / "ממתין לעדכון מהשרת" / "ייתכן שהריצה תקועה" אם אין שינוי כמה עשרות שניות
-  - להציג גם את זמן העדכון האחרון מהשרת
+## פתרון — ניקוי זיכרון חכם (בלי לשנות כמות קומבינציות)
 
-2. תיקון mismatch ברור בנתוני stages
-- `smartOptimizer.ts` עובד עם 30 stages
-- אבל `supabase/functions/start-optimization/index.ts` עדיין יוצר run עם `total_stages: 21`
-- כרגע בנתוני הרשת כבר הופיע 30, אז כנראה השרת החיצוני דורס את זה בהמשך, אבל זה עדיין חוסר עקביות שצריך ליישר כדי למנוע מצבים שבורים
-- אעדכן את יצירת ה־run כך שתהיה תואמת ל־30 שלבים
+### 1. הגבלת `round1Zones` — שמירת Top N בלבד
+**קובץ:** `src/lib/optimizer/smartOptimizer.ts`
 
-3. חיזוק ניטור התקדמות
-- אם `current_combo` לא משתנה אבל `updated_at` כן משתנה:
-  - להציג שהשרת חי אבל עובד על קומבינציות כבדות
-- אם גם `current_combo` וגם `updated_at` לא משתנים:
-  - להציג שהריצה לא מתקדמת בפועל
-- זה יפתור את הבלבול בין:
-  - איטי אבל חי
-  - תקוע באמת
-  - רק תצוגה לא נכונה
+במקום לשמור את כל `allTestedResults` (שורה 511), נשמור רק Top 200 תוצאות (ממוינות לפי trainReturn). זה מספיק בשביל `collectTopZones` שלוקח רק 10 zones.
 
-4. בדיקה אם יש צוואר בקבוק לוגי בצד החישוב
-לפי הקוד שכבר קראתי יש סיבות אמיתיות לכך ששלבים מסוימים נעשים הרבה יותר כבדים:
-- `runPortfolioBacktest` עובר על כל הנרות לכל קומבינציה
-- S2-S5 מפעילים לוגיקת אינדיקטורים/אסטרטגיות כבדות יותר
-- `optimizePortfolio` מעדכן progress רק כל 10 קומבינציות
-- אם השרת החיצוני לא מעדכן DB תוך כדי או מעדכן בתדירות נמוכה מדי, הלקוח ייראה קפוא
-לכן אבדוק גם את זרימת ה־progress כדי לוודא שאין throttling אגרסיבי מדי.
+```
+if (collectAll && result.allTestedResults) {
+  // Keep only top 200 instead of all results
+  const sorted = result.allTestedResults
+    .sort((a, b) => b.trainReturn - a.trainReturn)
+    .slice(0, 200);
+  round1Zones[si] = sorted;
+}
+```
 
-5. אם צריך — תוכנית להשלמת התיקון גם בשרת החיצוני
-אם אחרי יישור ה־UI יתברר שהשרת באמת לא מעדכן `optimization_runs` בזמן:
-- אגדיר בדיוק מה צריך להשתנות גם בשרת החיצוני:
-  - עדכון DB תדיר יותר
-  - heartbeat/update ל־`updated_at`
-  - כתיבת `current_combo` גם בזמן שלבים כבדים
-- כי כרגע מהקוד בפרויקט הזה רואים רק את ה־Edge Function שמתחילה job, לא את קוד הריצה של השרת עצמו.
+### 2. ניקוי `round1Zones` אחרי Round 2
+**קובץ:** `src/lib/optimizer/smartOptimizer.ts`
 
-קבצים שצפויים להשתנות:
-- `src/stores/optimizationStore.ts`
-- `src/components/backtest/OptimizationProgress.tsx`
-- `supabase/functions/start-optimization/index.ts`
-- ייתכן גם `src/lib/optimizer/smartOptimizer.ts` אם אצטרך ליישר metadata/progress
+אחרי שכל שלבי Round 2 סיימו, `round1Zones` כבר לא נחוץ:
 
-תוצאה צפויה אחרי התיקון:
-- אם השרת חי אבל איטי — תראה את זה ברור
-- אם השרת לא שלח עדכון כבר זמן רב — תראה אזהרת stall ברורה
-- המהירות לא תטעה יותר
-- ספירת השלבים תהיה עקבית
-- יהיה יותר קל לדעת אם צריך לעדכן גם את שרת ה־Railway עצמו
+```
+// After Round 2 ends (stage transitions to Round 3)
+if (stage.roundNumber === 3 && Object.keys(round1Zones).length > 0) {
+  for (const key in round1Zones) delete round1Zones[key];
+}
+```
+
+### 3. ניקוי `CombinationCache` בין סיבובים
+**קובץ:** `src/lib/optimizer/smartOptimizer.ts`
+
+בתחילת כל סיבוב חדש, לנקות entries שלא מסומנים כ-protected:
+
+```
+// At round boundary, evict non-protected entries
+if (prevRound !== stage.roundNumber) {
+  for (const [key, entry] of cache) {
+    if (!entry.protected) cache.delete(key);
+  }
+}
+```
+
+### 4. הוספת LRU limit ל-`IndicatorCacheManager`
+**קובץ:** `src/lib/optimizer/indicatorCache.ts`
+
+הגבלה ל-50 entries (כל entry הוא מערכי float גדולים):
+
+```
+getOrCompute(candles, params) {
+  // ... existing logic ...
+  if (this.cache.size > 50) {
+    const firstKey = this.cache.keys().next().value;
+    this.cache.delete(firstKey);
+  }
+}
+```
+
+### 5. ניקוי `allTestedResults` מתוך `optimizePortfolio`
+**קובץ:** `src/lib/optimizer/portfolioOptimizer.ts`
+
+מערך `allResults` (שורה 145) גדל ל-36K entries. במקום לשמור הכל, נשמור heap של Top 200 תוך כדי:
+
+```
+// Instead of pushing all results, maintain sorted top-N
+if (collectAllResults) {
+  if (allResults.length < 200 || trainReturn > allResults[allResults.length - 1].trainReturn) {
+    allResults.push({ params, trainReturn });
+    allResults.sort((a, b) => b.trainReturn - a.trainReturn);
+    if (allResults.length > 200) allResults.length = 200;
+  }
+}
+```
+
+## סיכום שינויים
+
+| קובץ | שינוי | חיסכון זיכרון |
+|-------|--------|---------------|
+| `smartOptimizer.ts` | Top 200 ב-round1Zones + ניקוי אחרי R2 | ~90% מ-round1Zones |
+| `smartOptimizer.ts` | ניקוי cache non-protected בין סיבובים | ~70% מ-cache |
+| `indicatorCache.ts` | LRU limit של 50 | מונע גדילה אינסופית |
+| `portfolioOptimizer.ts` | Top 200 ב-allResults | ~95% מ-allResults |
+
+## מה לא משתנה
+- מספר הקומבינציות שנבדקות — **זהה לחלוטין**
+- הלוגיקה של zones, fine-tune, strategy combination — **ללא שינוי**
+- רק הנתונים שנשמרים **בזיכרון** מצטמצמים
+
+## המלצה נוספת (Railway)
+גם אחרי התיקונים, מומלץ להוסיף ב-Railway:
+- `NODE_OPTIONS=--max-old-space-size=4096`
+- שדרוג instance ל-1GB+ RAM
+
