@@ -445,6 +445,7 @@ async function runLocalOptimization(
           stopPolling();
           set(state => ({
             isRunning: false,
+            optimizerBuild: msg.optimizerBuild || null,
             stageStatuses: state.stageStatuses.map(s => s.status === 'running' ? { ...s, status: 'completed' as const } : s),
             stageResults: msg.stageResults || [],
           }));
