@@ -1,38 +1,33 @@
 
-בדקתי את הקוד הנוכחי לעומק, והבעיה היא לא במקום שחשבנו קודם.
 
-## מה אימתתי עכשיו
-- `indicatorCache.clear()` כבר לא קיים בקוד הנוכחי.
-- אין כרגע שום קריאה ל-`setMaxSize(...)`; יש רק את המתודה עצמה בתוך `indicatorCache.ts`.
-- ב-`portfolioOptimizer.ts` אין בלוק cleanup שמוחק cache באמצע ריצה; באזור שציינת יש רק progress/yield.
-- ה-`50` שעדיין קיים ב-`smartOptimizer.ts` שייך ל-`round1Zones` (שמירת top 50 zones), לא ל-indicator cache.
+# העתקת הלוגיקה המקומית לשרת — ZIP מלא ונקי
 
-## מסקנה
-כן, נגעו חלקית במקום הנכון, אבל לא בכל צווארי הבקבוק. כרגע ההאטה הסבירה יותר מגיעה מ-3 דברים אחרים:
-1. `smartOptimizer.ts` עדיין עושה eviction ל-`combinationCache` במעבר בין rounds.
-2. `portfolioSimulator.ts` עדיין מחשב שוב ושוב rolling arrays של S3/S5 בכל קומבינציה (`rollingHighest/Lowest`, `s5AtrMa`) במקום לשמור גם אותם ב-cache.
-3. `indicatorCache.ts` כבר תומך ב-`datasetId`, אבל בפועל `runPortfolioBacktest()` לא מעביר `datasetId`, אז ה-cache לא מבדיל נכון בין symbol/train/test. זה גם באג נכונות וגם מונע cache אמין.
+## הבעיה
+הקוד ב-Lovable (שמריץ את האופטימיזציה המקומית) כבר מתוקן ועובד מהר. אבל ב-Railway כנראה רץ עדיין קוד ישן עם `indicatorCache.clear()` או eviction. צריך להבטיח שהקוד ב-Railway **זהה לחלוטין** לקוד המקומי.
 
-## תוכנית תיקון
-1. לעדכן את `portfolioSimulator.ts` כך שכל `getOrCompute()` יקבל `datasetId` נפרד ל-train ול-test לכל symbol.
-2. להרחיב את מנגנון ה-cache ב-`indicatorCache.ts` כדי לשמור גם את ה-derived indicators של S3/S5, במקום לחשב אותם מחדש בכל קומבינציה.
-3. להסיר מ-`smartOptimizer.ts` את ה-eviction של `combinationCache` בין rounds, כדי שלא יהיה cleanup באמצע ריצה.
-4. לעדכן את `OPTIMIZER_BUILD` לגרסה חדשה וברורה, כדי שאפשר יהיה לוודא ב-Railway שהקוד הנכון באמת רץ.
-5. לא לגעת ב-`portfolioOptimizer.ts` cleanup, כי לפי הקוד הנוכחי אין שם את הבלוק הבעייתי.
+## הפתרון
+1. ייצור ZIP חדש (`optimizer-bundle-v16.zip`) שמכיל את **כל** קבצי `src/lib/optimizer/` כפי שהם כרגע ב-Lovable — **חוץ מ-3 קבצים** שמכילים קוד browser-only ולא עוברים build ב-Railway:
+   - `csvParser.ts` (FileReader)
+   - `testThresholdAgent.ts` (Supabase import)
+   - `trainTestSplitAgent.ts` (Supabase import)
 
-## מה ישתנה בפועל
-- תחילת הריצה אמורה לזוז מהר יותר כי פחות עבודה תתבצע לפני hit ראשון.
-- reuse של אינדיקטורים יהיה אמיתי ועקבי בין symbols/phases.
-- פחות חישובים חוזרים בכל stage.
-- יהיה קל לבדוק דרך הלוג איזה build באמת עלה ל-Railway.
+2. עדכון `OPTIMIZER_BUILD` ל-`v16-2026-04-12-full-sync` כדי לוודא שהקוד הנכון רץ.
 
-## פרטים טכניים
-קבצים לשינוי:
-- `src/lib/optimizer/indicatorCache.ts`
-- `src/lib/optimizer/portfolioSimulator.ts`
-- `src/lib/optimizer/smartOptimizer.ts`
+3. הקבצים שייכללו (13 קבצים):
+   - `debugConfig.ts`, `indicatorCache.ts`, `indicators.ts`, `memoryAwareOptimizer.ts`
+   - `multiObjectiveMetrics.ts`, `parameterValidation.ts`, `portfolioOptimizer.ts`
+   - `portfolioSimulator.ts`, `presetConfigs.ts`, `s2GroundTruth.ts`
+   - `smartOptimizer.ts`, `strategies.ts`, `types.ts`
 
-אימות אחרי היישום:
-- חיפוש חוזר בקוד: אין `indicatorCache.clear`, אין call sites ל-`setMaxSize`, ואין eviction פעיל בין rounds.
-- לוג build חדש בתחילת ריצה.
-- בדיקה שהשלב הראשון מתחיל מיד ושקצב הקומבינציות עולה לעומת המצב הנוכחי.
+## מה ישתנה
+- שינוי שורה אחת: `OPTIMIZER_BUILD` ב-`smartOptimizer.ts`
+- ה-ZIP ייצור עם כל הקבצים הנקיים — ללא cache clearing, ללא eviction, ללא setMaxSize calls
+- פקודת deploy פשוטה שמעתיקה את כל 13 הקבצים ל-Railway בבת אחת
+
+## פקודות deploy (אחרי ההורדה)
+```powershell
+Expand-Archive -Path "$env:USERPROFILE\Downloads\optimizer-bundle-v16.zip" -DestinationPath "$env:USERPROFILE\Downloads\bundle-v16" -Force
+Copy-Item "$env:USERPROFILE\Downloads\bundle-v16\src\lib\optimizer\*" ".\src\lib\optimizer\" -Force
+git add -A; git commit -m "v16: full sync with local optimizer — no cache eviction"; git push
+```
+
