@@ -84,6 +84,10 @@ let lastComboCount = 0;
 let lastComboTime = 0;
 let lastServerUpdatedAt = '';
 let speedHistory: number[] = [];
+// Cumulative progress tracking across stages
+let completedCombos = 0;
+let lastTrackedStage = 0;
+let lastStageTotalCombos = 0;
 
 function stopPolling() {
   if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
