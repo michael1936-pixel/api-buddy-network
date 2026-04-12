@@ -2,6 +2,7 @@
  * Smart Optimizer — from server
  * 3 Rounds, 30 Stages (broad → refine → final)
  */
+import { ENABLE_SMART_OPTIMIZER_LOGS } from './debugConfig';
 import type {
   ExtendedStocksOptimizationConfig, ExtendedStocksStrategyParameters,
   SymbolData, PeriodSplit, MultiObjectiveResult,
@@ -346,14 +347,16 @@ export async function runSmartOptimization(
   numGoodZones: number = 10,
   zoneExpansionSteps: number = 1,
 ): Promise<SmartOptimizationResult> {
-  console.log('════════════════════════════════════════');
-  console.log(`SMART_OPTIMIZER_BUILD=v9`);
-  console.log(`Smart Optimizer: ${symbolsData.length} symbols, ${mode} mode`);
-  console.log(`Round 1: step ×${round1StepMultiplier} | Round 2: ${numGoodZones} zones ±${zoneExpansionSteps} | Round 3: combo + fine-tune`);
-  console.log('════════════════════════════════════════');
+  if (ENABLE_SMART_OPTIMIZER_LOGS) {
+    console.log('════════════════════════════════════════');
+    console.log(`SMART_OPTIMIZER_BUILD=v9`);
+    console.log(`Smart Optimizer: ${symbolsData.length} symbols, ${mode} mode`);
+    console.log(`Round 1: step ×${round1StepMultiplier} | Round 2: ${numGoodZones} zones ±${zoneExpansionSteps} | Round 3: combo + fine-tune`);
+    console.log('════════════════════════════════════════');
+  }
 
   const stages = generateDynamicStages(round1StepMultiplier);
-  console.log(`Total stages: ${stages.length} (7 + 7 + ${stages.length - 14})`);
+  if (ENABLE_SMART_OPTIMIZER_LOGS) console.log(`Total stages: ${stages.length} (7 + 7 + ${stages.length - 14})`);
 
   const stageResults: StageResult[] = [];
   let bestParams: Partial<ExtendedStocksStrategyParameters> = {};
@@ -383,7 +386,7 @@ export async function runSmartOptimization(
       // Free round1Zones after Round 2 — no longer needed
       if (stage.roundNumber >= 3 && Object.keys(round1Zones).length > 0) {
         for (const key in round1Zones) delete round1Zones[key];
-        console.log('🧹 Freed round1Zones memory');
+        if (ENABLE_SMART_OPTIMIZER_LOGS) console.log('🧹 Freed round1Zones memory');
       }
       // At start of Round 2, trim round1Zones to 50 entries per stage
       if (stage.roundNumber === 2) {
@@ -391,7 +394,6 @@ export async function runSmartOptimization(
           const k = Number(key);
           if (round1Zones[k] && round1Zones[k].length > 50) {
             round1Zones[k] = round1Zones[k].slice(0, 50);
-            console.log(`🧹 Trimmed round1Zones[${k}] to 50 entries`);
           }
         }
       }
@@ -401,41 +403,24 @@ export async function runSmartOptimization(
         for (const [key, entry] of cache) {
           if (!(entry as any).protected) { cache.delete(key); evicted++; }
         }
-        console.log(`🧹 Evicted ${evicted} non-protected cache entries at round boundary`);
+        if (ENABLE_SMART_OPTIMIZER_LOGS) console.log(`🧹 Evicted ${evicted} non-protected cache entries at round boundary`);
       }
       // Clear indicator cache between rounds to free float arrays
       indicatorCache.clear();
       // Force GC at round boundary
       if (typeof globalThis !== 'undefined' && (globalThis as any).gc) {
         (globalThis as any).gc();
-        console.log('🧹 GC triggered at round boundary');
       }
       prevRound = stage.roundNumber;
     }
 
-    // Inter-stage memory cleanup: evict unprotected cache entries every stage
-    {
-      let evicted = 0;
-      for (const [key, entry] of cache) {
-        if (!(entry as any).protected) { cache.delete(key); evicted++; }
-      }
-      if (evicted > 0) console.log(`🧹 Inter-stage cleanup: evicted ${evicted} cache entries`);
-      indicatorCache.clear();
-      if (typeof globalThis !== 'undefined' && (globalThis as any).gc) {
-        (globalThis as any).gc();
-        console.log('🧹 GC triggered between stages');
-      }
-    }
+    // Cache sizing: generous for all rounds
+    indicatorCache.setMaxSize(50);
 
-    // Aggressive cache limit for Round 2/3 stages (indicator-heavy, low reuse value)
-    if (stage.roundNumber >= 2) {
-      indicatorCache.setMaxSize(5); // Much smaller cache for fine-tuning stages
-    } else {
-      indicatorCache.setMaxSize(50); // Normal cache for Round 1
+    if (ENABLE_SMART_OPTIMIZER_LOGS) {
+      console.log(`\n▶ Stage ${si + 1}/${stages.length}: ${stage.name} (Round ${stage.roundNumber})`);
+      console.log(`  isFinalTuning=${!!stage.isFinalTuning} useZoneData=${!!stage.useZoneData} customRanges=${!!stage.customRanges} stepMult=${stage.stepMultiplier || 1}`);
     }
-
-    console.log(`\n▶ Stage ${si + 1}/${stages.length}: ${stage.name} (Round ${stage.roundNumber})`);
-    console.log(`  isFinalTuning=${!!stage.isFinalTuning} useZoneData=${!!stage.useZoneData} customRanges=${!!stage.customRanges} stepMult=${stage.stepMultiplier || 1}`);
 
     // Apply winning combination strategies to Round 3 stages
     if (activeCombination && stage.roundNumber === 3 && !stage.isStrategyCombinationStage) {
@@ -511,7 +496,7 @@ export async function runSmartOptimization(
             const tradeCountBonus = Math.min(totalTrades / 50, 1);
             const score = returnScore * overfitPenalty * diversityBonus * (1 + winRateBonus * 0.3 + tradeCountBonus * 0.2);
 
-            console.log(`  Combo ${ci + 1}/23: [${combo.strat1 ? 'S1' : ''}${combo.strat2 ? 'S2' : ''}${combo.strat3 ? 'S3' : ''}${combo.strat4 ? 'S4' : ''}${combo.strat5 ? 'S5' : ''}] score=${score.toFixed(2)} ret=${returnScore.toFixed(2)} overfit=${overfit.toFixed(2)}`);
+            if (ENABLE_SMART_OPTIMIZER_LOGS) console.log(`  Combo ${ci + 1}/23: [${combo.strat1 ? 'S1' : ''}${combo.strat2 ? 'S2' : ''}${combo.strat3 ? 'S3' : ''}${combo.strat4 ? 'S4' : ''}${combo.strat5 ? 'S5' : ''}] score=${score.toFixed(2)} ret=${returnScore.toFixed(2)} overfit=${overfit.toFixed(2)}`);
 
             if (score > bestComboScore) {
               bestComboScore = score;
@@ -536,7 +521,7 @@ export async function runSmartOptimization(
           globalBestTest = bestComboResult.totalTestReturn;
         }
         stageResults.push({ stageNumber: si + 1, stageName: stage.name, bestReturn: bestComboResult.totalTrainReturn, bestTestReturn: bestComboResult.totalTestReturn, elapsedTime: (Date.now() - stageStart) / 1000, plannedCombinations: 23, actualTestedCombinations: STRATEGY_COMBOS.length, bestParameters: { ...bestParams } });
-        console.log(`  ✓ Winning combo: S1=${activeCombination.strat1} S2=${activeCombination.strat2} S3=${activeCombination.strat3} S4=${activeCombination.strat4} S5=${activeCombination.strat5} (score=${bestComboScore.toFixed(2)})`);
+        if (ENABLE_SMART_OPTIMIZER_LOGS) console.log(`  ✓ Winning combo: S1=${activeCombination.strat1} S2=${activeCombination.strat2} S3=${activeCombination.strat3} S4=${activeCombination.strat4} S5=${activeCombination.strat5} (score=${bestComboScore.toFixed(2)})`);
       }
       continue;
     }
@@ -560,7 +545,7 @@ export async function runSmartOptimization(
         }
       }
       if (estimatedCombos > 5000) {
-        console.log(`⚠ Zone config too large (${estimatedCombos} combos), falling back to fine-tune for stage ${si}`);
+        if (ENABLE_SMART_OPTIMIZER_LOGS) console.log(`⚠ Zone config too large (${estimatedCombos} combos), falling back to fine-tune for stage ${si}`);
         stageCfg = createFineTuneConfig(baseConfig, bestParams, stage.parametersToOptimize, 2);
       }
     } else if (stage.roundNumber === 2) {
@@ -597,7 +582,7 @@ export async function runSmartOptimization(
           tr--;
           stageCfg = createFineTuneConfig(baseConfig, bestParams, stage.parametersToOptimize, tr);
           combos = countCombos(stageCfg);
-          console.log(`⚠ Combo guard: tuneRange=${tr} → ${combos} combos`);
+          if (ENABLE_SMART_OPTIMIZER_LOGS) console.log(`⚠ Combo guard: tuneRange=${tr} → ${combos} combos`);
         }
       }
 
@@ -632,7 +617,7 @@ export async function runSmartOptimization(
         }
 
         combos = countCombos(stageCfg);
-        console.log(`⚠ Combo cap: ${originalCombos} → ${combos} (maxValsPerParam=${maxValsPerParam})`);
+        if (ENABLE_SMART_OPTIMIZER_LOGS) console.log(`⚠ Combo cap: ${originalCombos} → ${combos} (maxValsPerParam=${maxValsPerParam})`);
       }
     }
 
@@ -661,8 +646,10 @@ export async function runSmartOptimization(
           plannedCombos *= Math.max(1, Math.floor((val.max - val.min) / val.step) + 1);
         }
       }
-      const source = stage.isFinalTuning ? 'fineTune' : stage.useZoneData ? 'zoneData' : stage.customRanges ? 'customRanges' : 'expandConfig';
-      console.log(`START R${stage.roundNumber}/S${(si % 7) + 1} ${stage.name} | source=${source} | combos=${plannedCombos}`);
+      if (ENABLE_SMART_OPTIMIZER_LOGS) {
+        const source = stage.isFinalTuning ? 'fineTune' : stage.useZoneData ? 'zoneData' : stage.customRanges ? 'customRanges' : 'expandConfig';
+        console.log(`START R${stage.roundNumber}/S${(si % 7) + 1} ${stage.name} | source=${source} | combos=${plannedCombos}`);
+      }
     }
 
     try {
@@ -689,7 +676,7 @@ export async function runSmartOptimization(
         let regressionDetected = false;
         if (stage.roundNumber >= 2 && globalBestTrain !== -Infinity && stageTrainReturn < globalBestTrain) {
           regressionDetected = true;
-          console.log(`⚠ REGRESSION detected at stage ${si + 1} (R${stage.roundNumber}): stage=${stageTrainReturn.toFixed(2)}% < global=${globalBestTrain.toFixed(2)}%`);
+          if (ENABLE_SMART_OPTIMIZER_LOGS) console.log(`⚠ REGRESSION detected at stage ${si + 1} (R${stage.roundNumber}): stage=${stageTrainReturn.toFixed(2)}% < global=${globalBestTrain.toFixed(2)}%`);
           // Rollback: restore params that this stage changed to global best values
           if (globalResult.bestForProfit) {
             const globalParams = globalResult.bestForProfit.parameters as ExtendedStocksStrategyParameters;
@@ -699,7 +686,7 @@ export async function runSmartOptimization(
                 (bestParams as any)[paramKey] = globalVal;
               }
             });
-            console.log(`  ↩ Rolled back ${stage.parametersToOptimize.length} params to global best values`);
+            if (ENABLE_SMART_OPTIMIZER_LOGS) console.log(`  ↩ Rolled back ${stage.parametersToOptimize.length} params to global best values`);
           }
         }
 
@@ -721,7 +708,7 @@ export async function runSmartOptimization(
         // Free round1Zones entry after Round 2 stage consumed it
         if (stage.useZoneData && stage.round1StageIndex !== undefined && round1Zones[stage.round1StageIndex]) {
           delete round1Zones[stage.round1StageIndex];
-          console.log(`🧹 Freed round1Zones[${stage.round1StageIndex}] after use`);
+          if (ENABLE_SMART_OPTIMIZER_LOGS) console.log(`🧹 Freed round1Zones[${stage.round1StageIndex}] after use`);
         }
 
         stageResults.push({
@@ -742,12 +729,14 @@ export async function runSmartOptimization(
   // If the last stage produced results, compare against global best
   const lastStage = stageResults[stageResults.length - 1];
   if (lastStage && globalResult.bestForProfit) {
-    const fineTunedAvg = (lastStage.bestReturn + lastStage.bestTestReturn) / 2;
-    const globalAvg = (globalResult.bestForProfit.totalTrainReturn + globalResult.bestForProfit.totalTestReturn) / 2;
-    if (globalAvg > fineTunedAvg) {
-      console.log(`✓ Final comparison: Global best (${globalAvg.toFixed(2)}%) wins over fine-tuned (${fineTunedAvg.toFixed(2)}%) — using global`);
-    } else {
-      console.log(`✓ Final comparison: Fine-tuned (${fineTunedAvg.toFixed(2)}%) wins over global (${globalAvg.toFixed(2)}%) — fine-tuning improved results`);
+    if (ENABLE_SMART_OPTIMIZER_LOGS) {
+      const fineTunedAvg = (lastStage.bestReturn + lastStage.bestTestReturn) / 2;
+      const globalAvg = (globalResult.bestForProfit.totalTrainReturn + globalResult.bestForProfit.totalTestReturn) / 2;
+      if (globalAvg > fineTunedAvg) {
+        console.log(`✓ Final comparison: Global best (${globalAvg.toFixed(2)}%) wins over fine-tuned (${fineTunedAvg.toFixed(2)}%) — using global`);
+      } else {
+        console.log(`✓ Final comparison: Fine-tuned (${fineTunedAvg.toFixed(2)}%) wins over global (${globalAvg.toFixed(2)}%) — fine-tuning improved results`);
+      }
     }
   }
 
