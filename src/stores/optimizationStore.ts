@@ -288,14 +288,19 @@ function startPolling(
     const { activeRunId, isRunning } = get();
     if (!activeRunId || !isRunning) { stopPolling(); return; }
 
-    const { data, error } = await supabase
-      .from('optimization_runs')
-      .select('*')
-      .eq('id', activeRunId)
-      .single();
+    // Fetch run status + latest logs in parallel
+    const [runRes, logsRes] = await Promise.all([
+      supabase.from('optimization_runs').select('*').eq('id', activeRunId).single(),
+      supabase.from('optimization_run_logs' as any).select('*').eq('run_id', activeRunId).order('created_at', { ascending: false }).limit(50),
+    ]);
 
-    if (error || !data) return;
-    const run = data as any;
+    if (runRes.error || !runRes.data) return;
+    const run = runRes.data as any;
+
+    // Update logs (reverse to show oldest first)
+    if (logsRes.data) {
+      set({ runLogs: ([...(logsRes.data as any[])].reverse()) as RunLogEntry[] });
+    }
 
     // Update progress
     const currentCombo = run.current_combo || 0;
