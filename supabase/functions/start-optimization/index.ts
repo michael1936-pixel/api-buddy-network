@@ -43,7 +43,7 @@ Deno.serve(async (req) => {
         .insert({
           symbol,
           status: "pending",
-          total_stages: 21,
+          total_stages: 30,
           current_stage: 0,
           current_combo: 0,
           total_combos: 0,
