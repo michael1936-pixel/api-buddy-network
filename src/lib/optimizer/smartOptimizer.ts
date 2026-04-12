@@ -386,7 +386,7 @@ export async function runSmartOptimization(
       // Free round1Zones after Round 2 — no longer needed
       if (stage.roundNumber >= 3 && Object.keys(round1Zones).length > 0) {
         for (const key in round1Zones) delete round1Zones[key];
-        console.log('🧹 Freed round1Zones memory');
+        if (ENABLE_SMART_OPTIMIZER_LOGS) console.log('🧹 Freed round1Zones memory');
       }
       // At start of Round 2, trim round1Zones to 50 entries per stage
       if (stage.roundNumber === 2) {
@@ -394,7 +394,6 @@ export async function runSmartOptimization(
           const k = Number(key);
           if (round1Zones[k] && round1Zones[k].length > 50) {
             round1Zones[k] = round1Zones[k].slice(0, 50);
-            console.log(`🧹 Trimmed round1Zones[${k}] to 50 entries`);
           }
         }
       }
@@ -404,41 +403,24 @@ export async function runSmartOptimization(
         for (const [key, entry] of cache) {
           if (!(entry as any).protected) { cache.delete(key); evicted++; }
         }
-        console.log(`🧹 Evicted ${evicted} non-protected cache entries at round boundary`);
+        if (ENABLE_SMART_OPTIMIZER_LOGS) console.log(`🧹 Evicted ${evicted} non-protected cache entries at round boundary`);
       }
       // Clear indicator cache between rounds to free float arrays
       indicatorCache.clear();
       // Force GC at round boundary
       if (typeof globalThis !== 'undefined' && (globalThis as any).gc) {
         (globalThis as any).gc();
-        console.log('🧹 GC triggered at round boundary');
       }
       prevRound = stage.roundNumber;
     }
 
-    // Inter-stage memory cleanup: evict unprotected cache entries every stage
-    {
-      let evicted = 0;
-      for (const [key, entry] of cache) {
-        if (!(entry as any).protected) { cache.delete(key); evicted++; }
-      }
-      if (evicted > 0) console.log(`🧹 Inter-stage cleanup: evicted ${evicted} cache entries`);
-      indicatorCache.clear();
-      if (typeof globalThis !== 'undefined' && (globalThis as any).gc) {
-        (globalThis as any).gc();
-        console.log('🧹 GC triggered between stages');
-      }
-    }
+    // Cache sizing: generous for all rounds
+    indicatorCache.setMaxSize(50);
 
-    // Aggressive cache limit for Round 2/3 stages (indicator-heavy, low reuse value)
-    if (stage.roundNumber >= 2) {
-      indicatorCache.setMaxSize(5); // Much smaller cache for fine-tuning stages
-    } else {
-      indicatorCache.setMaxSize(50); // Normal cache for Round 1
+    if (ENABLE_SMART_OPTIMIZER_LOGS) {
+      console.log(`\n▶ Stage ${si + 1}/${stages.length}: ${stage.name} (Round ${stage.roundNumber})`);
+      console.log(`  isFinalTuning=${!!stage.isFinalTuning} useZoneData=${!!stage.useZoneData} customRanges=${!!stage.customRanges} stepMult=${stage.stepMultiplier || 1}`);
     }
-
-    console.log(`\n▶ Stage ${si + 1}/${stages.length}: ${stage.name} (Round ${stage.roundNumber})`);
-    console.log(`  isFinalTuning=${!!stage.isFinalTuning} useZoneData=${!!stage.useZoneData} customRanges=${!!stage.customRanges} stepMult=${stage.stepMultiplier || 1}`);
 
     // Apply winning combination strategies to Round 3 stages
     if (activeCombination && stage.roundNumber === 3 && !stage.isStrategyCombinationStage) {
