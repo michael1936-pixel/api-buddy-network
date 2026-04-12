@@ -772,7 +772,9 @@ export function estimateAllStageCombinations(baseConfig: ExtendedStocksOptimizat
       }
     }
 
-    estimates[i + 1] = Math.min(300_000, Math.max(1, count));
+    const isS3Stage = stage.parametersToOptimize.some(p => p.startsWith('s3_'));
+    const cap = isS3Stage ? 100_000 : 300_000;
+    estimates[i + 1] = Math.min(cap, Math.max(1, count));
   }
   return estimates;
 }

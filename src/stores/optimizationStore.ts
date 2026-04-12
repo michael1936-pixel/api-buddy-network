@@ -106,7 +106,7 @@ function computeOverallProgress(
   }
   return {
     current: completedCombos + currentCombo,
-    total: Math.min(Math.max(overallTotal, completedCombos + totalCombos), 100_000),
+    total: Math.max(overallTotal, completedCombos + totalCombos),
   };
 }
 
