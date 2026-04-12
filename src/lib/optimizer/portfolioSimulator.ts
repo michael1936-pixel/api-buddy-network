@@ -490,7 +490,7 @@ export function runBacktest(
     shortTrades: trades.filter(t => t.type === 'short').length,
     winningTrades: wins.length, losingTrades: losses.length,
     sharpeRatio: sr, maxDrawdown: maxDD, profitFactor: pf, avgWin: avgW, avgLoss: avgL,
-    totalFeesUsd: totalFees, trades: [],
+    totalFeesUsd: totalFees, trades,
   };
 }
 
