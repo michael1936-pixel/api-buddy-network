@@ -343,6 +343,11 @@ function startPolling(
     else if (secsSinceUpdate > 60) serverStatus = 'slow';
     set({ lastServerUpdateAt: serverUpdatedAt, secondsSinceLastUpdate: secsSinceUpdate, serverStatus });
 
+    // Auto-trigger watchdog when stalled to mark crashed runs
+    if (serverStatus === 'stalled') {
+      supabase.functions.invoke('check-stalled-runs').catch(() => {});
+    }
+
     // Check if done
     if (run.status === 'completed') {
       stopPolling();
@@ -471,6 +476,11 @@ function startPollingQueue(
       if (secsSinceUpdate > 300) serverStatus = 'stalled';
       else if (secsSinceUpdate > 60) serverStatus = 'slow';
       set({ lastServerUpdateAt: serverUpdatedAt, secondsSinceLastUpdate: secsSinceUpdate, serverStatus });
+
+      // Auto-trigger watchdog when stalled
+      if (serverStatus === 'stalled') {
+        supabase.functions.invoke('check-stalled-runs').catch(() => {});
+      }
     } else {
       // All done
       set({ queueResults });

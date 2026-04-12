@@ -136,7 +136,7 @@ const StageRow: React.FC<{
         שלב {displayNumber} - {stage.stageName}
       </span>
       {stageProgress ? (
-        <span className="text-xs text-muted-foreground font-mono">
+        <span className="text-xs text-muted-foreground font-mono" dir="ltr">
           {formatNumber(stageProgress.current)} / {formatNumber(stageProgress.total)}
         </span>
       ) : combinationsEstimate ? (
@@ -352,7 +352,7 @@ export const SmartOptimizationProgressCard: React.FC<SmartOptimizationProgressPr
               <BarChart3 className="w-4 h-4 text-emerald-400" />
             </div>
             <div className="text-right space-y-1">
-              <p className="text-xl font-bold text-emerald-400 font-mono">
+              <p className="text-xl font-bold text-emerald-400 font-mono" dir="ltr">
                 {overallCombinations ? (
                   <>{formatNumber(overallCombinations.current)} / {formatNumber(overallCombinations.total)}</>
                 ) : (
@@ -370,7 +370,7 @@ export const SmartOptimizationProgressCard: React.FC<SmartOptimizationProgressPr
               <Flame className="w-4 h-4 text-purple-400" />
             </div>
             <div className="text-right space-y-1">
-              <p className="text-xl font-bold text-purple-400 font-mono">
+              <p className="text-xl font-bold text-purple-400 font-mono" dir="ltr">
                 {progress ? (
                   <>{formatNumber(progress.current)} / {formatNumber(progress.total)}</>
                 ) : '0 / 0'}
@@ -416,8 +416,8 @@ export const SmartOptimizationProgressCard: React.FC<SmartOptimizationProgressPr
         <div className="p-4 space-y-4 border-t border-primary/20">
           <div>
             <div className="flex items-center justify-between mb-2">
-              <span className="text-sm text-muted-foreground">
-                {overallCombinations ? formatNumber(overallCombinations.current) : stageResults.length} / {overallCombinations ? formatNumber(overallCombinations.total) : enabledStagesCount} קומבינציות ({overallProgress.toFixed(1)}%)
+              <span className="text-sm text-muted-foreground" dir="ltr">
+                {overallCombinations ? formatNumber(overallCombinations.current) : stageResults.length} / {overallCombinations ? formatNumber(overallCombinations.total) : enabledStagesCount} combos ({overallProgress.toFixed(1)}%)
               </span>
               <div className="flex items-center gap-2">
                 <span className="text-sm font-medium text-emerald-400">התקדמות כללית</span>
@@ -430,7 +430,7 @@ export const SmartOptimizationProgressCard: React.FC<SmartOptimizationProgressPr
           </div>
           <div>
             <div className="flex items-center justify-between mb-2">
-              <span className="text-sm text-muted-foreground">
+              <span className="text-sm text-muted-foreground" dir="ltr">
                 {progress ? formatNumber(progress.current) : 0} / {progress ? formatNumber(progress.total) : 0} ({stageProgressPct.toFixed(1)}%)
               </span>
               <div className="flex items-center gap-2">
@@ -455,8 +455,8 @@ export const SmartOptimizationProgressCard: React.FC<SmartOptimizationProgressPr
                   : "bg-amber-500/10 border-amber-500/30 text-amber-400"
               )}>
                 {serverStatus === 'stalled' 
-                  ? `⚠️ אין עדכון מהשרת כבר ${formatTime(secondsSinceLastUpdate)} — בדוק אם השרת פעיל`
-                  : `⏳ השרת מחשב... עדכון אחרון לפני ${formatTime(secondsSinceLastUpdate)}`
+                  ? `⚠️ אין עדכון מהשרת כבר ${formatTime(secondsSinceLastUpdate)} — ייתכן שהשרת קרס (OOM). בדוק לוגים`
+                  : `⏳ השרת מחשב שלב כבד... עדכון אחרון לפני ${formatTime(secondsSinceLastUpdate)}`
                 }
               </div>
             )}
