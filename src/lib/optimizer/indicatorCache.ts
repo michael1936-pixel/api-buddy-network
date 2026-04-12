@@ -65,15 +65,24 @@ export interface PrecomputedData {
   indicators: StrategyIndicators;
 }
 
-function getIndicatorParamsKey(params: ExtendedStocksStrategyParameters): string {
-  return [
+function getIndicatorParamsKey(params: ExtendedStocksStrategyParameters, datasetId?: string): string {
+  const paramPart = [
     params.s1_rsi_len, params.s1_atr_len, params.s1_atr_ma_len, params.s1_vol_len,
     params.ma_len, params.bb2_ma_len ?? 100, params.s1_adx_len ?? 14,
     params.s1_bb_len ?? 20, params.s1_bb_mult ?? 2.2,
-    // FIXED: include EMA lengths so Stage 10 variations actually produce different indicators
     params.s1_ema_fast_len ?? 9, params.s1_ema_mid_len ?? 21, params.s1_ema_trend_len ?? 50,
     params.bb2_adx_len ?? 11, params.bb2_bb_len ?? 20, params.bb2_bb_mult ?? 2.2,
   ].join('|');
+  // Include dataset identity to prevent cross-symbol/train-test cache collisions
+  return datasetId ? `${datasetId}::${paramPart}` : paramPart;
+}
+
+/** Build a stable dataset identity from candles (symbol + date range + count) */
+export function buildDatasetId(candles: Candle[], symbol?: string, phase?: string): string {
+  if (candles.length === 0) return 'empty';
+  const first = candles[0].timestamp;
+  const last = candles[candles.length - 1].timestamp;
+  return `${symbol || 'unk'}:${phase || ''}:${candles.length}:${first}:${last}`;
 }
 
 export function precomputeIndicators(candles: Candle[], params: ExtendedStocksStrategyParameters): PrecomputedData {
@@ -137,8 +146,8 @@ export class IndicatorCacheManager {
     }
   }
 
-  getOrCompute(candles: Candle[], params: ExtendedStocksStrategyParameters): PrecomputedData {
-    const key = getIndicatorParamsKey(params);
+  getOrCompute(candles: Candle[], params: ExtendedStocksStrategyParameters, datasetId?: string): PrecomputedData {
+    const key = getIndicatorParamsKey(params, datasetId);
     const cached = this.cache.get(key);
     if (cached) {
       this.hits++;

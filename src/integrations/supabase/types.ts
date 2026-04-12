@@ -440,6 +440,57 @@ export type Database = {
         }
         Relationships: []
       }
+      optimization_run_logs: {
+        Row: {
+          combination_cache_size: number | null
+          created_at: string
+          current_combo: number | null
+          heap_total_mb: number | null
+          heap_used_mb: number | null
+          id: number
+          indicator_cache_size: number | null
+          message: string
+          round_number: number | null
+          run_id: number
+          stage_name: string | null
+          stage_number: number | null
+          symbol: string | null
+          total_combos: number | null
+        }
+        Insert: {
+          combination_cache_size?: number | null
+          created_at?: string
+          current_combo?: number | null
+          heap_total_mb?: number | null
+          heap_used_mb?: number | null
+          id?: never
+          indicator_cache_size?: number | null
+          message: string
+          round_number?: number | null
+          run_id: number
+          stage_name?: string | null
+          stage_number?: number | null
+          symbol?: string | null
+          total_combos?: number | null
+        }
+        Update: {
+          combination_cache_size?: number | null
+          created_at?: string
+          current_combo?: number | null
+          heap_total_mb?: number | null
+          heap_used_mb?: number | null
+          id?: never
+          indicator_cache_size?: number | null
+          message?: string
+          round_number?: number | null
+          run_id?: number
+          stage_name?: string | null
+          stage_number?: number | null
+          symbol?: string | null
+          total_combos?: number | null
+        }
+        Relationships: []
+      }
       optimization_runs: {
         Row: {
           best_test: number | null

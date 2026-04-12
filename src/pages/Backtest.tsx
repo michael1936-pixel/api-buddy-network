@@ -4,8 +4,9 @@ import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "@/hooks/use-toast";
 import { SmartOptimizationProgressCard } from "@/components/backtest/OptimizationProgress";
 import SymbolSearch from "@/components/backtest/SymbolSearch";
-import { useOptimizationStore, allStages } from "@/stores/optimizationStore";
+import { useOptimizationStore, allStages, type RunLogEntry } from "@/stores/optimizationStore";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { estimateAllStageCombinations } from "@/lib/optimizer/smartOptimizer";
 import { NNE_PRESET_CONFIG } from "@/lib/optimizer/presetConfigs";
 import { Badge } from "@/components/ui/badge";
@@ -24,7 +25,7 @@ export default function BacktestPage() {
     smartProgress, stageProgressMap, overallCombinations, elapsedTime,
     combinationsPerSecond, error, bestTrainReturn, bestTestReturn,
     symbolQueue, queueIndex, queueResults, stageEstimates,
-    serverStatus, secondsSinceLastUpdate, lastServerUpdateAt,
+    serverStatus, secondsSinceLastUpdate, lastServerUpdateAt, runLogs,
     runOptimization, runOptimizationQueue, addToQueue, stopOptimization, toggleStage, rehydrate,
   } = useOptimizationStore();
 
@@ -91,29 +92,58 @@ export default function BacktestPage() {
       </div>
 
       {showProgress && (
-        <SmartOptimizationProgressCard
-          stages={stageStatuses}
-          currentStage={smartProgress?.currentStage || 0}
-          totalStages={smartProgress?.totalStages || allStages.length}
-          progress={smartProgress}
-          stageResults={stageResults}
-          onSkipStage={handleSkipStage}
-          onStop={stopOptimization}
-          elapsedTime={elapsedTime}
-          isRunning={isRunning}
-          enabledStages={enabledStages}
-          onStageToggle={toggleStage}
-          stageProgress={stageProgressMap}
-          overallCombinations={overallCombinations}
-          combinationsPerSecond={combinationsPerSecond}
-          symbol={currentSymbol}
-          bestTrainReturn={bestTrainReturn}
-          bestTestReturn={bestTestReturn}
-          stageEstimates={computedEstimates}
-          serverStatus={serverStatus}
-          secondsSinceLastUpdate={secondsSinceLastUpdate}
-          lastServerUpdateAt={lastServerUpdateAt}
-        />
+        <>
+          <SmartOptimizationProgressCard
+            stages={stageStatuses}
+            currentStage={smartProgress?.currentStage || 0}
+            totalStages={smartProgress?.totalStages || allStages.length}
+            progress={smartProgress}
+            stageResults={stageResults}
+            onSkipStage={handleSkipStage}
+            onStop={stopOptimization}
+            elapsedTime={elapsedTime}
+            isRunning={isRunning}
+            enabledStages={enabledStages}
+            onStageToggle={toggleStage}
+            stageProgress={stageProgressMap}
+            overallCombinations={overallCombinations}
+            combinationsPerSecond={combinationsPerSecond}
+            symbol={currentSymbol}
+            bestTrainReturn={bestTrainReturn}
+            bestTestReturn={bestTestReturn}
+            stageEstimates={computedEstimates}
+            serverStatus={serverStatus}
+            secondsSinceLastUpdate={secondsSinceLastUpdate}
+            lastServerUpdateAt={lastServerUpdateAt}
+          />
+
+          {runLogs.length > 0 && (
+            <div className="border-2 border-primary/20 rounded-xl bg-slate-900/80 overflow-hidden">
+              <div className="px-4 py-2 border-b border-primary/20 flex items-center justify-between">
+                <span className="text-xs text-muted-foreground font-mono">{runLogs.length} שורות</span>
+                <span className="text-sm font-semibold">📋 לוג שרת חי</span>
+              </div>
+              <ScrollArea className="h-[200px]">
+                <div className="p-2 space-y-0.5 font-mono text-[11px]" dir="ltr">
+                  {runLogs.map((log) => (
+                    <div key={log.id} className={cn(
+                      "px-2 py-0.5 rounded",
+                      log.message.includes('ERROR') || log.message.includes('FATAL') ? 'bg-red-500/10 text-red-400' :
+                      log.message.includes('WARN') || log.message.includes('guard') ? 'bg-amber-500/10 text-amber-400' :
+                      log.message.includes('completed') || log.message.includes('✅') ? 'bg-emerald-500/10 text-emerald-400' :
+                      'text-muted-foreground'
+                    )}>
+                      <span className="text-muted-foreground/60">{new Date(log.created_at).toLocaleTimeString('he-IL')} </span>
+                      {log.stage_name && <span className="text-primary">R{log.round_number}/S{log.stage_number} </span>}
+                      {log.heap_used_mb != null && <span className="text-amber-400">{log.heap_used_mb}MB </span>}
+                      {log.message}
+                    </div>
+                  ))}
+                </div>
+              </ScrollArea>
+            </div>
+          )}
+        </>
       )}
 
       {tracked.length > 0 && (
