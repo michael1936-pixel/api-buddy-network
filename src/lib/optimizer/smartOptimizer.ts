@@ -342,7 +342,7 @@ export async function runSmartOptimization(
   _onSkipStageCallback?: any,
   _onSaveState?: any,
   _savedState?: any,
-  round1StepMultiplier: number = 4,
+  round1StepMultiplier: number = 6,
   numGoodZones: number = 10,
   zoneExpansionSteps: number = 1,
 ): Promise<SmartOptimizationResult> {
@@ -572,7 +572,7 @@ export async function runSmartOptimization(
 
     // ═══ COMBO GUARD: cap every stage at 300K combos ═══
     {
-      const MAX_STAGE_COMBOS = 300_000;
+      const MAX_STAGE_COMBOS = 100_000;
       const numericKeys = stage.parametersToOptimize.filter(k => !BOOLEAN_PARAMS_SET.has(k));
       const boolCount = stage.parametersToOptimize.filter(k => BOOLEAN_PARAMS_SET.has(k)).length;
 
@@ -669,7 +669,7 @@ export async function runSmartOptimization(
       const collectAll = stage.roundNumber === 1;
       const result = await optimizePortfolio(
         symbolsData, stageCfg, periodSplit, mode, simulationConfig,
-        (info) => onProgress?.({ ...info, current: info.current, total: info.total, currentStage: si + 1, totalStages: stages.length, stageName: stage.name, stageDescription: stage.description, bestReturn: info.bestReturn, bestTestReturn: info.bestTestReturn }),
+        (info) => onProgress?.({ ...info, current: info.current, total: info.total, currentStage: si + 1, totalStages: stages.length, stageName: stage.name, stageDescription: stage.description, bestReturn: Math.max(globalBestTrain, info.bestReturn || 0), bestTestReturn: Math.max(globalBestTest, info.bestTestReturn || 0) }),
         abortSignal, undefined, false, 'profit', cache, si + 1, stage.roundNumber, preFiltered, indicatorCache, collectAll,
       );
 
