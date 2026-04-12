@@ -420,8 +420,18 @@ export async function runSmartOptimization(
       prevRound = stage.roundNumber;
     }
 
-    // Cache sizing: generous for all rounds
-    indicatorCache.setMaxSize(50);
+    // Abort check — every 5 seconds, check if run was cancelled
+    if (abortCheckFn) {
+      if (!lastAbortCheck) lastAbortCheck = Date.now();
+      if (Date.now() - lastAbortCheck > 5000) {
+        lastAbortCheck = Date.now();
+        const shouldAbort = await abortCheckFn();
+        if (shouldAbort) {
+          console.log(`🛑 Abort signal received at stage ${si + 1}/${stages.length}`);
+          break;
+        }
+      }
+    }
 
     if (ENABLE_SMART_OPTIMIZER_LOGS) {
       console.log(`\n▶ Stage ${si + 1}/${stages.length}: ${stage.name} (Round ${stage.roundNumber})`);
