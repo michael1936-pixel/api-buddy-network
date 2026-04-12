@@ -81,8 +81,13 @@ Deno.serve(async (req) => {
         volume: bar.volume,
       }));
 
-      console.log(`Loaded ${candles.length} bars for ${symbol}`);
-      symbolsData.push({ symbol, candles });
+      console.log(`Loaded ${candles.length} bars for ${symbol}, timestamps: ${candles[0].timestamp} to ${candles[candles.length-1].timestamp}`);
+      symbolsData.push({
+        symbol,
+        candles,
+        startDate: new Date(candles[0].timestamp).toISOString(),
+        endDate: new Date(candles[candles.length - 1].timestamp).toISOString(),
+      });
     }
 
     if (symbolsData.length === 0) {
