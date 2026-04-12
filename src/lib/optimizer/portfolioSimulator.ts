@@ -352,8 +352,8 @@ export function runBacktest(
           tpR = true; tpSteps = stepsCrossed;
           stepStopL = entryPrice * (1 + tpPct * tpSteps) * (1 - tpTrailDist / 100);
         }
-        let pf = trailStop ?? stopAtBarOpen ?? (baseSL ?? entryPrice * 0.98);
-        let fs = pf;
+        let pf: number = trailStop ?? stopAtBarOpen ?? (baseSL ?? entryPrice * 0.98);
+        let fs: number = pf;
         if (rsi >= rsiThr && trOnlyL !== null) fs = Math.max(fs, trOnlyL);
         else if (tpR && stepStopL !== null) fs = Math.max(fs, stepStopL);
         if (beActive || pf >= entryPrice) fs = Math.max(fs, entryPrice);
