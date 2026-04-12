@@ -55,7 +55,23 @@ interface SmartOptimizationProgressProps {
   lastServerUpdateAt?: string | null;
 }
 
-const STAGES_PER_ROUND = 7;
+// Dynamic: compute round boundaries from actual stage data
+const getRoundStageRanges = (stages: StageStatus[]): { round: 1 | 2 | 3; start: number; count: number }[] => {
+  // Group stages by their round (stages come from getOptimizationStages which has round info)
+  // Since we only have StageStatus (no round field), we use the server's total_stages
+  // Server sends 30 stages: 7 (R1) + 7 (R2) + 16 (R3)
+  const total = stages.length;
+  if (total <= 7) return [{ round: 1, start: 0, count: total }];
+  if (total <= 14) return [
+    { round: 1, start: 0, count: 7 },
+    { round: 2, start: 7, count: total - 7 },
+  ];
+  return [
+    { round: 1, start: 0, count: 7 },
+    { round: 2, start: 7, count: 7 },
+    { round: 3, start: 14, count: total - 14 },
+  ];
+};
 
 const formatTime = (seconds: number): string => {
   if (seconds < 60) return `${Math.floor(seconds)}s`;
@@ -92,8 +108,8 @@ const getRoundInfo = (roundNumber: 1 | 2 | 3): RoundInfo => {
 };
 
 const getRoundLabel = (stageNumber: number): { round: 1 | 2 | 3; badgeColor: string } => {
-  if (stageNumber <= STAGES_PER_ROUND) return { round: 1, badgeColor: 'bg-blue-500' };
-  if (stageNumber <= STAGES_PER_ROUND * 2) return { round: 2, badgeColor: 'bg-amber-500' };
+  if (stageNumber <= 7) return { round: 1, badgeColor: 'bg-blue-500' };
+  if (stageNumber <= 14) return { round: 2, badgeColor: 'bg-amber-500' };
   return { round: 3, badgeColor: 'bg-emerald-500' };
 };
 
@@ -167,16 +183,17 @@ interface RoundSectionProps {
   currentStage: number;
   stageProgressMap?: { [stageNumber: number]: { current: number; total: number } };
   startIndex: number;
+  stageCount: number;
   stageEstimates?: Record<number, number>;
 }
 
 const RoundSection: React.FC<RoundSectionProps> = ({
-  roundNumber, stages, stageResults, enabledStages, onStageToggle, currentStage, stageProgressMap, startIndex, stageEstimates
+  roundNumber, stages, stageResults, enabledStages, onStageToggle, currentStage, stageProgressMap, startIndex, stageCount, stageEstimates
 }) => {
   const roundInfo = getRoundInfo(roundNumber);
   const [isExpanded, setIsExpanded] = React.useState(roundNumber === 1);
-  const roundStages = stages.slice(startIndex, startIndex + STAGES_PER_ROUND);
-  const roundEnabledStages = enabledStages.slice(startIndex, startIndex + STAGES_PER_ROUND);
+  const roundStages = stages.slice(startIndex, startIndex + stageCount);
+  const roundEnabledStages = enabledStages.slice(startIndex, startIndex + stageCount);
   const allEnabled = roundEnabledStages.every(Boolean);
   const enabledCount = roundEnabledStages.filter(Boolean).length;
   const hasRunningStage = roundStages.some(s => s.status === 'running');
@@ -184,7 +201,7 @@ const RoundSection: React.FC<RoundSectionProps> = ({
 
   const handleRoundToggle = () => {
     const newValue = !allEnabled;
-    for (let i = 0; i < STAGES_PER_ROUND; i++) {
+    for (let i = 0; i < stageCount; i++) {
       if (roundStages[i]?.status === 'pending') {
         onStageToggle(startIndex + i, newValue);
       }
@@ -199,7 +216,7 @@ const RoundSection: React.FC<RoundSectionProps> = ({
       >
         <div className="flex items-center gap-3">
           {isExpanded ? <ChevronUp className="w-5 h-5 text-muted-foreground" /> : <ChevronDown className="w-5 h-5 text-muted-foreground" />}
-          <Badge variant="outline" className="text-xs">{enabledCount}/{STAGES_PER_ROUND} שלבים</Badge>
+          <Badge variant="outline" className="text-xs">{enabledCount}/{stageCount} שלבים</Badge>
           {hasRunningStage && <Loader2 className="w-4 h-4 text-primary animate-spin" />}
           {hasCompletedStage && !hasRunningStage && <CheckCircle2 className="w-4 h-4 text-emerald-400" />}
         </div>
