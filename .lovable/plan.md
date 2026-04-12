@@ -1,24 +1,18 @@
 
 
-## תיקון שגיאות Runtime בחנות האופטימיזציה
+## הגבלת מספר הקומבינציות ל-100,000
 
-### בעיות
-1. **`Cannot destructure 'activeRunId'`** — ב-`startPolling` יש guard (`if (!state)`) אבל ב-`startPollingQueue` (שורה 438) אין — `get()` מחזיר `undefined` אחרי HMR/hot reload
-2. **`REALISTIC_MAX_TOTAL is not defined`** — שארית מגרסה ישנה שנשמרה ב-cache של Vite. כבר לא בקוד הנוכחי, אבל צריך לוודא שאין התייחסות
+### שינוי (קובץ יחיד)
 
-### שינויים
+**`src/stores/optimizationStore.ts`** — שורה 109:
 
-| קובץ | שינוי |
-|---|---|
-| `src/stores/optimizationStore.ts` | הוספת guard ב-`startPollingQueue`: `const state = get(); if (!state) { stopPolling(); return; }` לפני כל destructure. אותו דבר בכל מקום ש-`get()` נקרא ב-interval callbacks |
+```typescript
+// לפני:
+total: Math.max(overallTotal, completedCombos + totalCombos),
 
-### פירוט
-- **שורה ~438**: שינוי `const { isRunning } = get()` ל:
-  ```typescript
-  const state = get();
-  if (!state) { stopPolling(); return; }
-  const { isRunning } = state;
-  ```
-- **שורות ~461-470**: הוספת guard דומה לפני גישה ל-`activeRun` data
-- השגיאה `REALISTIC_MAX_TOTAL` תיעלם אחרי rebuild (כבר לא בקוד)
+// אחרי:
+total: Math.min(Math.max(overallTotal, completedCombos + totalCombos), 100_000),
+```
+
+זה יגביל את התצוגה ל-100K מקסימום, לא משנה מה השרת מדווח.
 
