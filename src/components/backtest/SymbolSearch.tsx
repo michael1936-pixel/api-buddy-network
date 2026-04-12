@@ -6,15 +6,19 @@ import { cn } from "@/lib/utils";
 import { supabase } from "@/integrations/supabase/client";
 import { X, Play } from "lucide-react";
 
+export type OptimizationMode = 'server' | 'local';
+
 interface Props {
   onSelect: (symbol: string) => void;
   onRunQueue?: (symbols: string[]) => void;
   onAddToQueue?: (symbols: string[]) => void;
   disabled?: boolean;
   isRunning?: boolean;
+  mode?: OptimizationMode;
+  onModeChange?: (mode: OptimizationMode) => void;
 }
 
-export default function SymbolSearch({ onSelect, onRunQueue, onAddToQueue, disabled, isRunning }: Props) {
+export default function SymbolSearch({ onSelect, onRunQueue, onAddToQueue, disabled, isRunning, mode = 'server', onModeChange }: Props) {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<{ symbol: string; sector?: string | null }[]>([]);
   const [showDropdown, setShowDropdown] = useState(false);
@@ -90,6 +94,36 @@ export default function SymbolSearch({ onSelect, onRunQueue, onAddToQueue, disab
 
   return (
     <div className="space-y-2">
+      {/* Mode toggle */}
+      {onModeChange && (
+        <div className="flex items-center gap-2 text-xs">
+          <span className="text-muted-foreground">מנוע:</span>
+          <button
+            onClick={() => onModeChange('server')}
+            className={cn(
+              "px-2 py-0.5 rounded transition-colors",
+              mode === 'server' ? "bg-primary/20 text-primary font-semibold" : "text-muted-foreground hover:text-foreground"
+            )}
+            disabled={isRunning}
+          >
+            🖥️ שרת
+          </button>
+          <button
+            onClick={() => onModeChange('local')}
+            className={cn(
+              "px-2 py-0.5 rounded transition-colors",
+              mode === 'local' ? "bg-primary/20 text-primary font-semibold" : "text-muted-foreground hover:text-foreground"
+            )}
+            disabled={isRunning}
+          >
+            💻 מקומי
+          </button>
+          <span className="text-[10px] text-muted-foreground/60">
+            {mode === 'server' ? '(Railway — ריצות ארוכות)' : '(דפדפן — מהירות מקסימלית)'}
+          </span>
+        </div>
+      )}
+
       <div className="relative">
         <Input
           ref={inputRef}

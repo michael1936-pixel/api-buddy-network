@@ -1,106 +1,76 @@
 /**
- * Web Worker for portfolio optimization
- * Now delegates to optimizePortfolio which uses the full server engine
+ * Web Worker for local portfolio optimization
+ * Runs runSmartOptimization directly in the browser
  */
 import type {
   SymbolData, PeriodSplit, ExtendedStocksOptimizationConfig,
-  ExtendedStocksStrategyParameters, Candle,
 } from '../lib/optimizer/types';
-import {
-  optimizePortfolio, ProgressInfo, CombinationCache,
-} from '../lib/optimizer/portfolioOptimizer';
-import { preFilterSymbols } from '../lib/optimizer/portfolioSimulator';
-import { IndicatorCacheManager } from '../lib/optimizer/indicatorCache';
-import { createEmptyMultiObjectiveResult, updateMultiObjectiveResult } from '../lib/optimizer/multiObjectiveMetrics';
+import { runSmartOptimization, type SmartProgressInfo } from '../lib/optimizer/smartOptimizer';
+import { NNE_PRESET_CONFIG } from '../lib/optimizer/presetConfigs';
 
-// ---- Stored state ----
-let storedConfig: ExtendedStocksOptimizationConfig | null = null;
-let storedSymbolsData: SymbolData[] = [];
-let storedPeriodSplit: PeriodSplit | null = null;
-let storedMode: string = 'single';
-let storedSimulationConfig: any = {};
-let storedBestParamsSoFar: Partial<ExtendedStocksStrategyParameters> = {};
-
-// ---- Message handler ----
 self.onmessage = async (e: MessageEvent) => {
   try {
     const msg = e.data;
 
-    if (msg.type === 'init') {
-      storedSymbolsData = msg.symbolsData;
-      storedPeriodSplit = {
-        trainStartDate: new Date(msg.periodSplit.trainStartDate),
-        trainEndDate: new Date(msg.periodSplit.trainEndDate),
-        testStartDate: new Date(msg.periodSplit.testStartDate),
-        testEndDate: new Date(msg.periodSplit.testEndDate),
-        trainPercent: msg.periodSplit.trainPercent,
+    if (msg.type === 'run_smart') {
+      const {
+        symbolsData,
+        periodSplit: rawSplit,
+        enabledStages,
+      } = msg;
+
+      // Deserialize dates
+      const periodSplit: PeriodSplit = {
+        trainStartDate: new Date(rawSplit.trainStartDate),
+        trainEndDate: new Date(rawSplit.trainEndDate),
+        testStartDate: new Date(rawSplit.testStartDate),
+        testEndDate: new Date(rawSplit.testEndDate),
+        trainPercent: rawSplit.trainPercent,
       };
-      storedMode = msg.mode || 'single';
-      storedConfig = msg.config;
-      storedSimulationConfig = msg.simulationConfig || {};
-      storedBestParamsSoFar = msg.bestParamsSoFar || {};
 
-      self.postMessage({ type: 'init_complete', totalCombinations: 0 });
-      return;
-    }
+      const config = NNE_PRESET_CONFIG as ExtendedStocksOptimizationConfig;
 
-    if (msg.type === 'process') {
-      if (!storedConfig || !storedPeriodSplit) {
-        throw new Error('Worker not initialized');
-      }
+      let lastProgressTime = 0;
+      const PROGRESS_THROTTLE_MS = 200; // Send progress max 5 times/sec
 
-      const indicatorCache = new IndicatorCacheManager();
-      const preFiltered = preFilterSymbols(storedSymbolsData, storedPeriodSplit);
-      const cache: CombinationCache = new Map();
+      const result = await runSmartOptimization(
+        symbolsData,
+        config,
+        periodSplit,
+        'single',
+        {},
+        (info: SmartProgressInfo) => {
+          const now = Date.now();
+          if (now - lastProgressTime < PROGRESS_THROTTLE_MS && info.current < info.total) return;
+          lastProgressTime = now;
 
-      let bestTrainReturn = -Infinity;
-      let bestTestReturn = -Infinity;
-
-      const result = await optimizePortfolio(
-        storedSymbolsData,
-        storedConfig,
-        storedPeriodSplit,
-        storedMode,
-        storedSimulationConfig,
-        (info: ProgressInfo) => {
-          if (info.bestReturn !== undefined && info.bestReturn > bestTrainReturn) {
-            bestTrainReturn = info.bestReturn;
-            bestTestReturn = info.bestTestReturn ?? bestTestReturn;
-          }
           self.postMessage({
             type: 'progress',
+            currentStage: info.currentStage,
+            totalStages: info.totalStages,
             current: info.current,
             total: info.total,
-            percent: Math.round((info.current / info.total) * 100),
-            bestTrainReturn: info.bestReturn,
+            stageName: info.stageName,
+            stageDescription: info.stageDescription,
+            bestReturn: info.bestReturn,
             bestTestReturn: info.bestTestReturn,
           });
         },
-        undefined, // no abort signal in worker (handled by terminate)
-        undefined,
+        undefined, // abortSignal — not supported in worker, terminate instead
         false,
         'profit',
-        cache,
-        0, 0,
-        preFiltered,
-        indicatorCache,
+        true, // enableRound2
+        true, // enableRound3
+        enabledStages,
       );
 
-      // Send result
-      if (result.bestForProfit) {
-        self.postMessage({
-          type: 'results_batch',
-          results: [result.bestForProfit],
-        });
-      }
-
+      // Send final result
       self.postMessage({
         type: 'complete',
-        bestTrainReturn,
-        bestTestReturn,
-        total: cache.size,
+        finalResult: result.finalResult,
+        stageResults: result.stageResults,
+        wasStopped: result.wasStopped,
       });
-      return;
     }
   } catch (error) {
     console.error('🔴 [Worker] Error:', error);
