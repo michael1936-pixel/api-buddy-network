@@ -50,6 +50,9 @@ interface SmartOptimizationProgressProps {
   bestTrainReturn?: number | null;
   bestTestReturn?: number | null;
   stageEstimates?: Record<number, number>;
+  serverStatus?: 'active' | 'slow' | 'stalled' | 'idle';
+  secondsSinceLastUpdate?: number;
+  lastServerUpdateAt?: string | null;
 }
 
 const STAGES_PER_ROUND = 7;
