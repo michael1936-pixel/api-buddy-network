@@ -1,39 +1,51 @@
 
 
-## תיקון התקדמות כללית — הצגת סכום קומבינציות מכל השלבים
+## תיקון התקדמות כללית — שימוש ב-stageEstimates לחישוב מדויק
 
 ### הבעיה
-השרת כותב ל-`optimization_runs` את ה-`current_combo` ו-`total_combos` של **השלב הנוכחי בלבד**, לא ערכים מצטברים. לכן "התקדמות כללית" מציגה 239,340 / 300,000 — שזה רק שלב 3, במקום הסכום של כל השלבים.
+הלוגיקה הנוכחית צוברת combos רק כשרואים מעבר שלב בזמן אמת. אם המשתמש פותח את הדף באמצע ריצה, או אם שלבים 1-2 כבר הסתיימו לפני שה-polling התחיל — הצבירה מתפספסת. לכן "התקדמות כללית" מציגה את אותם מספרים כמו "שלב נוכחי".
 
-### פתרון — צבירה ב-Store
-נעקוב ב-store אחרי מעברי שלבים ונצבור את הקומבינציות שהושלמו:
+### פתרון — חישוב מבוסס stageEstimates + currentStage
+במקום לצבור ידנית, נחשב מ-`stageEstimates` (שכבר קיים ומכיל את מספר הקומבינציות לכל שלב):
+
+```
+completedCombos = סכום stageEstimates של כל השלבים שמספרם < currentStage
+overallCurrent = completedCombos + currentCombo
+overallTotal = סכום stageEstimates של כל השלבים המופעלים
+```
+
+### שינויים
 
 | קובץ | שינוי |
 |---|---|
-| `src/stores/optimizationStore.ts` | הוספת משתנים `completedCombos` ו-`lastTrackedStage` שצוברים combos כשהשלב עולה. חישוב overall = צבור + שלב נוכחי |
+| `src/stores/optimizationStore.ts` | בשני מקומות (startPolling + startPollingQueue): חישוב overall מתוך stageEstimates במקום צבירה ידנית. הסרת completedCombos/lastTrackedStage/lastStageTotalCombos |
 
-### לוגיקה
-```
-// Module-level refs
-let completedCombos = 0;      // סכום combos משלבים שהסתיימו
-let lastTrackedStage = 0;     // שלב אחרון שנספר
-let lastStageTotalCombos = 0; // total_combos של השלב הקודם
+### לוגיקה בפולינג
+```typescript
+// Get estimates (from store state or compute once)
+const estimates = get().stageEstimates;
+const enabledStages = get().enabledStages;
 
-// בכל poll, כשרואים שcurrent_stage עלה:
-if (currentStage > lastTrackedStage && lastTrackedStage > 0) {
-  completedCombos += lastStageTotalCombos;
+// Sum completed stages
+let completedCombos = 0;
+for (const [stageNum, combos] of Object.entries(estimates)) {
+  if (Number(stageNum) < currentStage) {
+    completedCombos += combos;
+  }
 }
-lastTrackedStage = currentStage;
-lastStageTotalCombos = totalCombos; // total של השלב הנוכחי
 
-// Overall:
-overallCombinations = {
-  current: completedCombos + currentCombo,
-  total: completedCombos + totalCombos  // מתעדכן בכל שלב
+const overallCurrent = completedCombos + currentCombo;
+
+// Total = sum of all enabled stage estimates
+let overallTotal = 0;
+for (const [stageNum, combos] of Object.entries(estimates)) {
+  overallTotal += combos;
 }
+
+set({ overallCombinations: { current: overallCurrent, total: overallTotal } });
 ```
 
-- ב-`resetState` מאפסים `completedCombos = 0`, `lastTrackedStage = 0`
-- ה-cap של 300K מוסר מה-total (כבר לא רלוונטי — עכשיו זה סכום אמיתי)
-- אותו תיקון גם ב-`startPollingQueue`
+- הסרת המשתנים `completedCombos`, `lastTrackedStage`, `lastStageTotalCombos` (כבר לא נחוצים)
+- חישוב `stageEstimates` בתחילת הריצה (כבר קורה ב-Backtest.tsx → `computedEstimates`) ושמירתו ב-store
+- וידוא ש-`stageEstimates` מאוכלס ב-store לפני הפולינג (בפונקציית `runOptimization`/`runOptimizationQueue`)
 
