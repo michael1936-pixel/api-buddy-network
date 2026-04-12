@@ -618,6 +618,22 @@ export async function runSmartOptimization(
       (stageCfg as any).bars_between_trades = { min: 0, max: 0, step: 1 };
     }
 
+    // ═══ TELEMETRY: count actual planned combos before running ═══
+    {
+      const numericKeys = stage.parametersToOptimize.filter(k => !BOOLEAN_PARAMS_SET.has(k));
+      const boolCount = stage.parametersToOptimize.filter(k => BOOLEAN_PARAMS_SET.has(k)).length;
+      let plannedCombos = Math.pow(2, boolCount);
+      for (const key of numericKeys) {
+        const val = (stageCfg as any)[key];
+        if (val?.values?.length) plannedCombos *= val.values.length;
+        else if (val && typeof val === 'object' && 'min' in val && 'max' in val && 'step' in val) {
+          plannedCombos *= Math.max(1, Math.floor((val.max - val.min) / val.step) + 1);
+        }
+      }
+      const source = stage.isFinalTuning ? 'fineTune' : stage.useZoneData ? 'zoneData' : stage.customRanges ? 'customRanges' : 'expandConfig';
+      console.log(`START R${stage.roundNumber}/S${(si % 7) + 1} ${stage.name} | source=${source} | combos=${plannedCombos}`);
+    }
+
     try {
       const collectAll = stage.roundNumber === 1;
       const result = await optimizePortfolio(
