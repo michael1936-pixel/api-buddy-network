@@ -65,6 +65,8 @@ export interface OptimizationState {
   runLogs: RunLogEntry[];
   // Mode
   optimizationMode: OptimizationMode;
+  // Build version
+  optimizerBuild: string | null;
 
   // Actions
   setOptimizationMode: (mode: OptimizationMode) => void;
@@ -153,6 +155,7 @@ export const useOptimizationStore = create<OptimizationState>((set, get) => ({
   stageEstimates: {},
   runLogs: [],
   optimizationMode: 'server',
+  optimizerBuild: null,
 
   setOptimizationMode: (mode) => set({ optimizationMode: mode }),
 
@@ -184,6 +187,7 @@ export const useOptimizationStore = create<OptimizationState>((set, get) => ({
       serverStatus: 'idle',
       stageEstimates: {},
       runLogs: [],
+      optimizerBuild: null,
     });
     lastComboCount = 0;
     lastComboTime = 0;
