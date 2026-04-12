@@ -377,6 +377,7 @@ export async function runSmartOptimization(
 
   let activeCombination: { strat1: boolean; strat2: boolean; strat3: boolean; strat4: boolean; strat5: boolean } | null = null;
 
+  let lastAbortCheck = Date.now();
   let prevRound = 0;
   for (let si = 0; si < stages.length; si++) {
     if (abortSignal?.aborted) break;
