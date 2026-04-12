@@ -179,7 +179,7 @@ export const useOptimizationStore = create<OptimizationState>((set, get) => ({
         isRunning: true,
         currentSymbol: lastRun.symbol,
         activeRunId: lastRun.id,
-        overallCombinations: { current: lastRun.current_combo || 0, total: Math.min(lastRun.total_combos || 0, 300_000) },
+        overallCombinations: { current: lastRun.current_combo || 0, total: lastRun.total_combos || 0 },
         bestTrainReturn: lastRun.best_train,
         bestTestReturn: lastRun.best_test,
       });
@@ -187,7 +187,7 @@ export const useOptimizationStore = create<OptimizationState>((set, get) => ({
     } else {
       set({
         currentSymbol: lastRun.symbol,
-        overallCombinations: { current: lastRun.current_combo || 0, total: Math.min(lastRun.total_combos || 0, 300_000) },
+        overallCombinations: { current: lastRun.current_combo || 0, total: lastRun.total_combos || 0 },
         bestTrainReturn: lastRun.best_train,
         bestTestReturn: lastRun.best_test,
       });
