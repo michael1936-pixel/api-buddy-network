@@ -176,7 +176,7 @@ export const useOptimizationStore = create<OptimizationState>((set, get) => ({
         bestTrainReturn: lastRun.best_train,
         bestTestReturn: lastRun.best_test,
       });
-      startPolling(get, set);
+      startPolling(set, get);
     } else {
       set({
         currentSymbol: lastRun.symbol,
