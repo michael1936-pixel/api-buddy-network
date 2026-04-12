@@ -30,6 +30,10 @@ export interface OptimizationState {
   activeRunId: number | null;
   bestTrainReturn: number | null;
   bestTestReturn: number | null;
+  // Stall detection
+  lastServerUpdateAt: string | null;
+  secondsSinceLastUpdate: number;
+  serverStatus: 'active' | 'slow' | 'stalled' | 'idle';
   // Queue
   symbolQueue: string[];
   queueIndex: number;
@@ -58,6 +62,8 @@ let elapsedTimer: ReturnType<typeof setInterval> | null = null;
 let startTime = 0;
 let lastComboCount = 0;
 let lastComboTime = 0;
+let lastServerUpdatedAt = '';
+let speedHistory: number[] = [];
 
 function stopPolling() {
   if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
@@ -79,6 +85,9 @@ export const useOptimizationStore = create<OptimizationState>((set, get) => ({
   activeRunId: null,
   bestTrainReturn: null,
   bestTestReturn: null,
+  lastServerUpdateAt: null,
+  secondsSinceLastUpdate: 0,
+  serverStatus: 'idle',
   symbolQueue: [],
   queueIndex: 0,
   queueResults: {},
@@ -106,10 +115,14 @@ export const useOptimizationStore = create<OptimizationState>((set, get) => ({
       activeRunId: null,
       bestTrainReturn: null,
       bestTestReturn: null,
+      lastServerUpdateAt: null,
+      secondsSinceLastUpdate: 0,
+      serverStatus: 'idle',
       stageEstimates: {},
     });
     lastComboCount = 0;
     lastComboTime = 0;
+    lastServerUpdatedAt = '';
   },
 
   stopOptimization: () => {
