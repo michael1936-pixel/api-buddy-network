@@ -149,6 +149,9 @@ export const useOptimizationStore = create<OptimizationState>((set, get) => ({
     lastComboCount = 0;
     lastComboTime = 0;
     lastServerUpdatedAt = '';
+    completedCombos = 0;
+    lastTrackedStage = 0;
+    lastStageTotalCombos = 0;
   },
 
   stopOptimization: () => {
