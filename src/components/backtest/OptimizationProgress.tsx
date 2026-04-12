@@ -305,10 +305,20 @@ export const SmartOptimizationProgressCard: React.FC<SmartOptimizationProgressPr
   }, [stages, currentStage]);
 
   const stageInRound = useMemo(() => {
-    if (currentStage <= 7) return currentStage;
-    if (currentStage <= 14) return currentStage - 7;
-    return currentStage - 14;
-  }, [currentStage]);
+    const ranges = getRoundStageRanges(stages);
+    for (const r of ranges) {
+      if (currentStage <= r.start + r.count) return currentStage - r.start;
+    }
+    return currentStage;
+  }, [currentStage, stages]);
+
+  const currentRoundStageCount = useMemo(() => {
+    const ranges = getRoundStageRanges(stages);
+    for (const r of ranges) {
+      if (currentStage <= r.start + r.count) return r.count;
+    }
+    return stages.length;
+  }, [currentStage, stages]);
 
   const estimatedTimeRemaining = useMemo(() => {
     if (!progress || !combinationsPerSecond || combinationsPerSecond === 0) return null;
@@ -348,7 +358,7 @@ export const SmartOptimizationProgressCard: React.FC<SmartOptimizationProgressPr
           <div className="flex items-center gap-3">
             <div className="w-3 h-3 rounded-full bg-emerald-500 animate-pulse" />
             <span className={`font-bold text-lg ${currentRoundInfo.color}`}>
-              {symbol ? `${symbol} — ` : ''}אופטימיזציה חכמה - סיבוב {currentRoundInfo.round} | שלב {stageInRound} מתוך 7
+              {symbol ? `${symbol} — ` : ''}אופטימיזציה חכמה - סיבוב {currentRoundInfo.round} | שלב {stageInRound} מתוך {currentRoundStageCount}
             </span>
             <Brain className="w-6 h-6 text-primary" />
           </div>
