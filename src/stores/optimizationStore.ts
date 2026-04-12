@@ -172,7 +172,7 @@ export const useOptimizationStore = create<OptimizationState>((set, get) => ({
         isRunning: true,
         currentSymbol: lastRun.symbol,
         activeRunId: lastRun.id,
-        overallCombinations: { current: lastRun.current_combo || 0, total: Math.min(lastRun.total_combos || 0, 2_000_000) },
+        overallCombinations: { current: lastRun.current_combo || 0, total: Math.min(lastRun.total_combos || 0, 300_000) },
         bestTrainReturn: lastRun.best_train,
         bestTestReturn: lastRun.best_test,
       });
@@ -180,7 +180,7 @@ export const useOptimizationStore = create<OptimizationState>((set, get) => ({
     } else {
       set({
         currentSymbol: lastRun.symbol,
-        overallCombinations: { current: lastRun.current_combo || 0, total: Math.min(lastRun.total_combos || 0, 2_000_000) },
+        overallCombinations: { current: lastRun.current_combo || 0, total: Math.min(lastRun.total_combos || 0, 300_000) },
         bestTrainReturn: lastRun.best_train,
         bestTestReturn: lastRun.best_test,
       });
@@ -283,7 +283,9 @@ function startPolling(
   }, 1000);
 
   pollTimer = setInterval(async () => {
-    const { activeRunId, isRunning } = get();
+    const state = get();
+    if (!state) { stopPolling(); return; }
+    const { activeRunId, isRunning } = state;
     if (!activeRunId || !isRunning) { stopPolling(); return; }
 
     // Fetch run status + latest logs in parallel
@@ -302,7 +304,7 @@ function startPolling(
 
     // Update progress
     const currentCombo = run.current_combo || 0;
-    const totalCombos = Math.min(run.total_combos || 0, 2_000_000);
+    const totalCombos = Math.min(run.total_combos || 0, 300_000);
     const currentStage = run.current_stage || 0;
 
     set({
@@ -432,7 +434,7 @@ function startPollingQueue(
     if (activeRun) {
       const run = activeRun as any;
       const currentCombo = run.current_combo || 0;
-      const totalCombos = Math.min(run.total_combos || 0, 2_000_000);
+      const totalCombos = Math.min(run.total_combos || 0, 300_000);
       const currentStage = run.current_stage || 0;
 
       set({
