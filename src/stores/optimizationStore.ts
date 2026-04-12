@@ -14,9 +14,6 @@ import {
 } from '@/lib/optimizer/smartOptimizer';
 import { NNE_PRESET_CONFIG } from '@/lib/optimizer/presetConfigs';
 
-// Compute realistic max total from actual stage estimates
-const _stageEstimates = estimateAllStageCombinations(NNE_PRESET_CONFIG);
-const REALISTIC_MAX_TOTAL = Object.values(_stageEstimates).reduce((a, b) => a + b, 0);
 
 const POLL_INTERVAL = 2000; // poll DB every 2s
 
