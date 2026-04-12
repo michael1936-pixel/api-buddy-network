@@ -69,7 +69,10 @@ function getIndicatorParamsKey(params: ExtendedStocksStrategyParameters): string
   return [
     params.s1_rsi_len, params.s1_atr_len, params.s1_atr_ma_len, params.s1_vol_len,
     params.ma_len, params.bb2_ma_len ?? 100, params.s1_adx_len ?? 14,
-    params.s1_bb_len ?? 20, params.s1_bb_mult ?? 2.2
+    params.s1_bb_len ?? 20, params.s1_bb_mult ?? 2.2,
+    // FIXED: include EMA lengths so Stage 10 variations actually produce different indicators
+    params.s1_ema_fast_len ?? 9, params.s1_ema_mid_len ?? 21, params.s1_ema_trend_len ?? 50,
+    params.bb2_adx_len ?? 11, params.bb2_bb_len ?? 20, params.bb2_bb_mult ?? 2.2,
   ].join('|');
 }
 
@@ -79,13 +82,18 @@ export function precomputeIndicators(candles: Candle[], params: ExtendedStocksSt
   const lows = candles.map(c => c.low);
   const vols = candles.map(c => c.volume ?? 0);
 
+  // FIXED: use params instead of hardcoded lengths
+  const emaFastLen = params.s1_ema_fast_len ?? 9;
+  const emaMidLen = params.s1_ema_mid_len ?? 21;
+  const emaTrendLen = params.s1_ema_trend_len ?? 50;
+
   const rsiArr = calculateRSI(closes, params.s1_rsi_len);
   const atrArr = calculateATR(highs, lows, closes, params.s1_atr_len);
   const avgAtrArr = simpleSMA(atrArr, params.s1_atr_ma_len);
   const volMaArr = simpleSMA(vols, params.s1_vol_len);
-  const emaTrendArr = calculateEMA(closes, params.ma_len);
-  const ema9Arr = calculateEMA(closes, 9);
-  const ema21Arr = calculateEMA(closes, 21);
+  const emaTrendArr = calculateEMA(closes, emaTrendLen);
+  const ema9Arr = calculateEMA(closes, emaFastLen);
+  const ema21Arr = calculateEMA(closes, emaMidLen);
   const ema100Arr = calculateEMA(closes, params.bb2_ma_len ?? 100);
   const adxCalcArr = calculateADXPine(highs, lows, closes, params.s1_adx_len ?? 14);
   const bbCalc = calculateBBPine(closes, params.s1_bb_len ?? 20, params.s1_bb_mult ?? 2.2);
@@ -116,8 +124,18 @@ export class IndicatorCacheManager {
   private cache = new Map<string, PrecomputedData>();
   private hits = 0;
   private misses = 0;
-
   private maxSize = 50; // LRU limit — each entry holds large float arrays
+
+  /** Dynamically reduce cache size for memory-constrained stages */
+  setMaxSize(size: number) {
+    this.maxSize = size;
+    // Evict if currently over new limit
+    while (this.cache.size > this.maxSize) {
+      const firstKey = this.cache.keys().next().value;
+      if (firstKey !== undefined) this.cache.delete(firstKey);
+      else break;
+    }
+  }
 
   getOrCompute(candles: Candle[], params: ExtendedStocksStrategyParameters): PrecomputedData {
     const key = getIndicatorParamsKey(params);
