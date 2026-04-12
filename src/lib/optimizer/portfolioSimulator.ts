@@ -101,9 +101,27 @@ function getStopExecPriceShort(stopAtOpen: number | null, trail: number | null, 
 }
 
 /**
- * Build indicators from precomputed data, adding rolling arrays for S3/S5
+ * Cache for derived indicators (S3/S5 rolling arrays) — avoids recomputation per combination
+ * Key: datasetId + s3_breakout_len + s5_range_len + s5_squeeze_len + enable flags
  */
-export function buildIndicatorsFromPrecomputed(precomputed: PrecomputedData, params: ExtendedStocksStrategyParameters): StrategyIndicators {
+const derivedCache = new Map<string, StrategyIndicators>();
+let derivedCacheMaxSize = 2000;
+
+function getDerivedKey(datasetId: string, params: ExtendedStocksStrategyParameters): string {
+  return `${datasetId}|${params.enable_strat3 ? params.s3_breakout_len : 0}|${params.enable_strat5 ? params.s5_range_len : 0}|${params.enable_strat5 ? params.s5_squeeze_len : 0}`;
+}
+
+/**
+ * Build indicators from precomputed data, adding rolling arrays for S3/S5
+ * Uses derived cache to avoid recomputing rolling arrays
+ */
+export function buildIndicatorsFromPrecomputed(precomputed: PrecomputedData, params: ExtendedStocksStrategyParameters, datasetId?: string): StrategyIndicators {
+  if (datasetId) {
+    const dKey = getDerivedKey(datasetId, params);
+    const cached = derivedCache.get(dKey);
+    if (cached) return cached;
+  }
+
   const ind = { ...precomputed.indicators };
   // Add rolling arrays for S3 and S5 — computed once via deque
   if (params.enable_strat3 && params.s3_breakout_len > 0) {
@@ -128,6 +146,16 @@ export function buildIndicatorsFromPrecomputed(precomputed: PrecomputedData, par
     }
     ind.s5AtrMa = atrSma;
   }
+
+  if (datasetId) {
+    const dKey = getDerivedKey(datasetId, params);
+    derivedCache.set(dKey, ind);
+    if (derivedCache.size > derivedCacheMaxSize) {
+      const firstKey = derivedCache.keys().next().value;
+      if (firstKey !== undefined) derivedCache.delete(firstKey);
+    }
+  }
+
   return ind;
 }
 
@@ -545,13 +573,15 @@ export function runPortfolioBacktest(
   const testResults: PortfolioBacktestResult[] = [];
 
   for (const sd of pf) {
-    // Get or compute indicators from cache
-    const trainPre = cache.getOrCompute(sd.trainCandles, params);
-    const testPre = cache.getOrCompute(sd.testCandles, params);
+    // Get or compute indicators from cache — with datasetId for correct scoping
+    const trainDatasetId = `${sd.symbol}:train:${sd.trainCandles.length}`;
+    const testDatasetId = `${sd.symbol}:test:${sd.testCandles.length}`;
+    const trainPre = cache.getOrCompute(sd.trainCandles, params, trainDatasetId);
+    const testPre = cache.getOrCompute(sd.testCandles, params, testDatasetId);
 
     // Build strategy-specific indicators (rolling arrays)
-    const trainInd = buildIndicatorsFromPrecomputed(trainPre, params);
-    const testInd = buildIndicatorsFromPrecomputed(testPre, params);
+    const trainInd = buildIndicatorsFromPrecomputed(trainPre, params, trainDatasetId);
+    const testInd = buildIndicatorsFromPrecomputed(testPre, params, testDatasetId);
 
     const trainResult = runBacktest(sd.trainCandles, params, trainInd);
     const testResult = runBacktest(sd.testCandles, params, testInd);

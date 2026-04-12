@@ -10,7 +10,7 @@ import type {
 
 /** Build version — always logged (even when ENABLE_SMART_OPTIMIZER_LOGS=false)
  *  so we can verify which code Railway is actually running */
-export const OPTIMIZER_BUILD = 'v13-2026-04-12-no-cache-reset';
+export const OPTIMIZER_BUILD = 'v15-2026-04-12-no-eviction';
 import {
   optimizePortfolio, ProgressInfo, CombinationCache, markBestCacheEntryProtected,
   DEFAULT_EXTENDED_STOCKS_PARAMETERS,
@@ -404,14 +404,7 @@ export async function runSmartOptimization(
           }
         }
       }
-      // Evict ALL non-protected cache entries between rounds
-      if (prevRound > 0) {
-        let evicted = 0;
-        for (const [key, entry] of cache) {
-          if (!(entry as any).protected) { cache.delete(key); evicted++; }
-        }
-        if (ENABLE_SMART_OPTIMIZER_LOGS) console.log(`🧹 Evicted ${evicted} non-protected cache entries at round boundary`);
-      }
+      // v15: No eviction — 24GB RAM, keep all cache entries across rounds
       prevRound = stage.roundNumber;
     }
 
