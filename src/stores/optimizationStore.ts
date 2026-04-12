@@ -309,13 +309,23 @@ function startPolling(
       set({ runLogs: ([...(logsRes.data as any[])].reverse()) as RunLogEntry[] });
     }
 
-    // Update progress
+    // Update progress — cumulative across stages
     const currentCombo = run.current_combo || 0;
-    const totalCombos = Math.min(run.total_combos || 0, 300_000);
+    const totalCombos = run.total_combos || 0;
     const currentStage = run.current_stage || 0;
 
+    // Detect stage transition and accumulate completed combos
+    if (currentStage > lastTrackedStage && lastTrackedStage > 0) {
+      completedCombos += lastStageTotalCombos;
+    }
+    lastTrackedStage = currentStage;
+    lastStageTotalCombos = totalCombos;
+
+    const overallCurrent = completedCombos + currentCombo;
+    const overallTotal = completedCombos + totalCombos;
+
     set({
-      overallCombinations: { current: Math.min(currentCombo, totalCombos), total: totalCombos },
+      overallCombinations: { current: overallCurrent, total: overallTotal },
       bestTrainReturn: run.best_train,
       bestTestReturn: run.best_test,
       smartProgress: {
