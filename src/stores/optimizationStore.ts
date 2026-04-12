@@ -304,7 +304,7 @@ function startPolling(
 
     // Update progress
     const currentCombo = run.current_combo || 0;
-    const totalCombos = run.total_combos || 0;
+    const totalCombos = Math.min(run.total_combos || 0, allStages.length * 300_000);
     const currentStage = run.current_stage || 0;
 
     set({
@@ -434,7 +434,7 @@ function startPollingQueue(
     if (activeRun) {
       const run = activeRun as any;
       const currentCombo = run.current_combo || 0;
-      const totalCombos = run.total_combos || 0;
+      const totalCombos = Math.min(run.total_combos || 0, allStages.length * 300_000);
       const currentStage = run.current_stage || 0;
 
       set({

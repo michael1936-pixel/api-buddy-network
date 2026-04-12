@@ -772,7 +772,7 @@ export function estimateAllStageCombinations(baseConfig: ExtendedStocksOptimizat
       }
     }
 
-    estimates[i + 1] = Math.max(1, count);
+    estimates[i + 1] = Math.min(300_000, Math.max(1, count));
   }
   return estimates;
 }
