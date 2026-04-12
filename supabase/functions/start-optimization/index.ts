@@ -83,7 +83,7 @@ Deno.serve(async (req) => {
 
     // 2. Build periodSplit (70% train, 30% test)
     // Use the first symbol's data range for the split
-    const firstData = symbolsData[0].data;
+    const firstData = symbolsData[0].candles;
     const trainPercent = 70;
     const splitIndex = Math.floor(firstData.length * (trainPercent / 100));
     
