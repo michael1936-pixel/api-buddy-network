@@ -24,6 +24,7 @@ export default function BacktestPage() {
     smartProgress, stageProgressMap, overallCombinations, elapsedTime,
     combinationsPerSecond, error, bestTrainReturn, bestTestReturn,
     symbolQueue, queueIndex, queueResults, stageEstimates,
+    serverStatus, secondsSinceLastUpdate, lastServerUpdateAt,
     runOptimization, runOptimizationQueue, addToQueue, stopOptimization, toggleStage, rehydrate,
   } = useOptimizationStore();
 
@@ -109,6 +110,9 @@ export default function BacktestPage() {
           bestTrainReturn={bestTrainReturn}
           bestTestReturn={bestTestReturn}
           stageEstimates={computedEstimates}
+          serverStatus={serverStatus}
+          secondsSinceLastUpdate={secondsSinceLastUpdate}
+          lastServerUpdateAt={lastServerUpdateAt}
         />
       )}
 

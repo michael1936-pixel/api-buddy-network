@@ -30,6 +30,10 @@ export interface OptimizationState {
   activeRunId: number | null;
   bestTrainReturn: number | null;
   bestTestReturn: number | null;
+  // Stall detection
+  lastServerUpdateAt: string | null;
+  secondsSinceLastUpdate: number;
+  serverStatus: 'active' | 'slow' | 'stalled' | 'idle';
   // Queue
   symbolQueue: string[];
   queueIndex: number;
@@ -58,6 +62,8 @@ let elapsedTimer: ReturnType<typeof setInterval> | null = null;
 let startTime = 0;
 let lastComboCount = 0;
 let lastComboTime = 0;
+let lastServerUpdatedAt = '';
+let speedHistory: number[] = [];
 
 function stopPolling() {
   if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
@@ -79,6 +85,9 @@ export const useOptimizationStore = create<OptimizationState>((set, get) => ({
   activeRunId: null,
   bestTrainReturn: null,
   bestTestReturn: null,
+  lastServerUpdateAt: null,
+  secondsSinceLastUpdate: 0,
+  serverStatus: 'idle',
   symbolQueue: [],
   queueIndex: 0,
   queueResults: {},
@@ -106,10 +115,14 @@ export const useOptimizationStore = create<OptimizationState>((set, get) => ({
       activeRunId: null,
       bestTrainReturn: null,
       bestTestReturn: null,
+      lastServerUpdateAt: null,
+      secondsSinceLastUpdate: 0,
+      serverStatus: 'idle',
       stageEstimates: {},
     });
     lastComboCount = 0;
     lastComboTime = 0;
+    lastServerUpdatedAt = '';
   },
 
   stopOptimization: () => {
@@ -296,15 +309,39 @@ function startPolling(
       return { stageStatuses: next };
     });
 
-    // Speed calc
+    // Speed calc + stall detection
     const now = Date.now();
+    const serverUpdatedAt = run.updated_at || '';
+    const serverChanged = serverUpdatedAt !== lastServerUpdatedAt;
+    const dc = currentCombo - lastComboCount;
+
+    if (serverChanged) {
+      lastServerUpdatedAt = serverUpdatedAt;
+    }
+
     if (now - lastComboTime > 2000) {
       const dt = (now - lastComboTime) / 1000;
-      const dc = currentCombo - lastComboCount;
-      if (dt > 0 && dc > 0) set({ combinationsPerSecond: dc / dt });
+      if (dt > 0 && dc > 0) {
+        const instantSpeed = dc / dt;
+        speedHistory.push(instantSpeed);
+        if (speedHistory.length > 5) speedHistory.shift();
+        const avgSpeed = speedHistory.reduce((a, b) => a + b, 0) / speedHistory.length;
+        set({ combinationsPerSecond: avgSpeed });
+      } else {
+        // No new combos — decay speed toward 0
+        set({ combinationsPerSecond: 0 });
+        speedHistory = [];
+      }
       lastComboCount = currentCombo;
       lastComboTime = now;
     }
+
+    // Stall detection
+    const secsSinceUpdate = serverUpdatedAt ? (now - new Date(serverUpdatedAt).getTime()) / 1000 : 0;
+    let serverStatus: 'active' | 'slow' | 'stalled' | 'idle' = 'active';
+    if (secsSinceUpdate > 120) serverStatus = 'stalled';
+    else if (secsSinceUpdate > 30) serverStatus = 'slow';
+    set({ lastServerUpdateAt: serverUpdatedAt, secondsSinceLastUpdate: secsSinceUpdate, serverStatus });
 
     // Check if done
     if (run.status === 'completed') {
@@ -403,15 +440,37 @@ function startPollingQueue(
         return { stageStatuses: next };
       });
 
-      // Speed calc
+      // Speed calc + stall detection
       const now = Date.now();
+      const serverUpdatedAt = run.updated_at || '';
+      const serverChanged = serverUpdatedAt !== lastServerUpdatedAt;
+      const dc = (run.current_combo || 0) - lastComboCount;
+
+      if (serverChanged) {
+        lastServerUpdatedAt = serverUpdatedAt;
+      }
+
       if (now - lastComboTime > 2000) {
         const dt = (now - lastComboTime) / 1000;
-        const dc = (run.current_combo || 0) - lastComboCount;
-        if (dt > 0 && dc > 0) set({ combinationsPerSecond: dc / dt });
+        if (dt > 0 && dc > 0) {
+          const instantSpeed = dc / dt;
+          speedHistory.push(instantSpeed);
+          if (speedHistory.length > 5) speedHistory.shift();
+          const avgSpeed = speedHistory.reduce((a, b) => a + b, 0) / speedHistory.length;
+          set({ combinationsPerSecond: avgSpeed });
+        } else {
+          set({ combinationsPerSecond: 0 });
+          speedHistory = [];
+        }
         lastComboCount = run.current_combo || 0;
         lastComboTime = now;
       }
+
+      const secsSinceUpdate = serverUpdatedAt ? (now - new Date(serverUpdatedAt).getTime()) / 1000 : 0;
+      let serverStatus: 'active' | 'slow' | 'stalled' | 'idle' = 'active';
+      if (secsSinceUpdate > 120) serverStatus = 'stalled';
+      else if (secsSinceUpdate > 30) serverStatus = 'slow';
+      set({ lastServerUpdateAt: serverUpdatedAt, secondsSinceLastUpdate: secsSinceUpdate, serverStatus });
     } else {
       // All done
       set({ queueResults });

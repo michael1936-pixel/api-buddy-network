@@ -50,6 +50,9 @@ interface SmartOptimizationProgressProps {
   bestTrainReturn?: number | null;
   bestTestReturn?: number | null;
   stageEstimates?: Record<number, number>;
+  serverStatus?: 'active' | 'slow' | 'stalled' | 'idle';
+  secondsSinceLastUpdate?: number;
+  lastServerUpdateAt?: string | null;
 }
 
 const STAGES_PER_ROUND = 7;
@@ -244,7 +247,8 @@ export const SmartOptimizationProgressCard: React.FC<SmartOptimizationProgressPr
   stages, currentStage, totalStages, progress, stageResults,
   onSkipStage, onStop, elapsedTime, isRunning, enabledStages, onStageToggle,
   stageProgress: stageProgressMap, preRunMode = false, overallCombinations, 
-  combinationsPerSecond, symbol, bestTrainReturn, bestTestReturn, stageEstimates
+  combinationsPerSecond, symbol, bestTrainReturn, bestTestReturn, stageEstimates,
+  serverStatus = 'idle', secondsSinceLastUpdate = 0, lastServerUpdateAt
 }) => {
   const overallProgress = useMemo(() => {
     const enabledCount = enabledStages.filter(Boolean).length;
@@ -438,11 +442,24 @@ export const SmartOptimizationProgressCard: React.FC<SmartOptimizationProgressPr
               <div className="h-full bg-gradient-to-r from-purple-600 to-purple-400 transition-all duration-300" style={{ width: `${stageProgressPct}%` }} />
             </div>
             <div className="flex items-center justify-between mt-2 text-xs text-muted-foreground">
-              <span>מהירות: {speed.toFixed(1)} קומבינציות/שניה</span>
-              {estimatedTimeRemaining && (
-                <span>זמן משוער: {formatTime(estimatedTimeRemaining)} דקות</span>
+              <span>מהירות: {speed > 0 ? `${speed.toFixed(0)} קומבינציות/שניה` : 'ממתין...'}</span>
+              {estimatedTimeRemaining && speed > 0 && (
+                <span>זמן משוער: {formatTime(estimatedTimeRemaining)}</span>
               )}
             </div>
+            {isRunning && !preRunMode && serverStatus !== 'active' && serverStatus !== 'idle' && (
+              <div className={cn(
+                "mt-2 text-xs font-medium text-right px-3 py-2 rounded-lg border",
+                serverStatus === 'stalled' 
+                  ? "bg-red-500/10 border-red-500/30 text-red-400"
+                  : "bg-amber-500/10 border-amber-500/30 text-amber-400"
+              )}>
+                {serverStatus === 'stalled' 
+                  ? `⚠️ השרת לא עדכן כבר ${Math.floor(secondsSinceLastUpdate)}s — ייתכן שהריצה תקועה`
+                  : `⏳ ממתין לעדכון מהשרת (${Math.floor(secondsSinceLastUpdate)}s)...`
+                }
+              </div>
+            )}
           </div>
           {isRunning && (
             <Button variant="outline" size="sm" onClick={onSkipStage} className="w-full gap-2">
