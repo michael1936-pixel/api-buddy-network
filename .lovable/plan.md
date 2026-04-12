@@ -1,51 +1,47 @@
 
-נכון — אני מכיר את הריפו הזה, אז לא צריך ממך עוד מיפוי. מה שאני יודע בוודאות מהקוד:
 
-- ה-UI, הטבלאות ופונקציות ה-backend כבר כאן.
-- האופטימיזציה עצמה לא רצה בתוך הריפו הזה: `start-optimization` שולחת ל-`RAILWAY_API_URL/api/optimize`.
-- `optimization_trades` כבר קיימת, ו-`TradesDetailPanel` כבר יודע לטעון ולהציג אותה.
-- `verify-optimization` היום הוא אימות חלקי בלבד, וגם משתמש במפתחות פרמטרים שלא תואמים למנוע האמיתי.
-- במנוע המקומי `runBacktest` אוסף `trades` אבל מחזיר `trades: []`, כך שגם אם נרצה לשמור עסקאות, כרגע הליבה זורקת אותן.
+# קיבוע פרמטרי S1 לפי הערכים מהתמונה + חבילת פרויקט מלאה
 
-### מה אבנה אחרי אישור
-1. **תיקון ליבת האופטימיזציה**
-   - אשנה את מנוע ה-backtest כך שיחזיר עסקאות מלאות במקום למחוק אותן.
-   - אמלא לכל עסקה שדות שימושיים: כיוון, זמני כניסה/יציאה, מחיר, PnL, bars held, strategy id/name.
+## שינוי יחיד — `src/lib/optimizer/presetConfigs.ts` שורות 51-62
 
-2. **חבילת Railway מוכנה להרצה**
-   - אכין חבילת patch מסודרת לשירות החיצוני שמריץ `/api/optimize`, מבוססת על מנוע האופטימיזציה שכבר נמצא כאן.
-   - החבילה תכלול:
-     - שימוש ב-`IndicatorCacheManager`
-     - שמירת `optimization_results`
-     - שמירת `optimization_trades` עבור התוצאה/ות הנבחרות
-     - עדכון `optimization_runs` ו-logים של התקדמות
+הערכים הקבועים מהתמונה (min === max):
 
-3. **שדרוג אימות עסקאות**
-   - אחליף את האימות ההיוריסטי ב-replay אמיתי של האסטרטגיה עם אותם params ואותם market data.
-   - אשווה trade-by-trade ואחזיר אבחון ברור: חוסר נתונים, סטיית אינדיקטור, price mismatch, PnL mismatch, או logic divergence.
+```
+// Strategy 1 - EMA Trend
+enable_strat1: true, enable_rsi_exit: false,
+rsi_exit_long: { min: 40, max: 75, step: 1 }, rsi_exit_short: { min: 20, max: 60, step: 1 },
+min_bars_in_trade_exit: { min: 2, max: 12, step: 1 },
+s1_ema_fast_len: { min: 9, max: 9, step: 1 },
+s1_ema_mid_len: { min: 21, max: 21, step: 1 },
+s1_ema_trend_len: { min: 50, max: 50, step: 1 },
+s1_rsi_len: { min: 14, max: 14, step: 1 },
+s1_atr_len: { min: 16, max: 16, step: 1 },
+s1_atr_ma_len: { min: 12, max: 12, step: 1 },
+s1_atr_hi_mult: { min: 0.85, max: 0.85, step: 0.01 },
+s1_adx_len: { min: 11, max: 11, step: 1 },
+s1_adx_strong: { min: 18, max: 18, step: 1 },
+s1_bb_len: { min: 20, max: 20, step: 1 },
+s1_bb_mult: { min: 2.2, max: 2.2, step: 0.1 },
+s1_far_from_bb_pc: { min: 2, max: 2, step: 1 },
+s1_vol_len: { min: 16, max: 16, step: 1 },
+s1_hi_vol_mult: { min: 1, max: 1, step: 0.1 },
+s1_min_conds: { min: 3, max: 3, step: 1 },
+```
 
-4. **שיפור המסך הקיים**
-   - אשאיר את `TradesDetailPanel` כבסיס, אבל אחזק אותו כך שיעבוד טוב עם הנתונים האמיתיים:
-     - הדגשת עסקאות בעייתיות
-     - סטטיסטיקות מורחבות
-     - פירוט פערים לכל עסקה
-     - empty state מדויק יותר עד שמגיעות עסקאות מהשרת
+**הבהרה**: `rsi_exit_long/short` ו-`min_bars_in_trade_exit` נשארים עם טווחים כי הם מסננים שנבדקים רק בסוף האופטימיזציה, לא חלק מ-S1.
 
-5. **מסירה כ"פרויקט מתוקן" בלי עוד פינג-פונג**
-   - בתוך הריפו הזה: כל תיקוני ה-UI / backend functions / לוגיקת replay.
-   - בנוסף: חבילת server מוכנה ל-Railway כ-artifact נפרד, כדי שתוכל להריץ את כל ה-stack מחדש בלי לנחש איפה להדביק קוד.
+## חבילת Railway מלאה
 
-### פרטים טכניים
-- קבצים בטוח יושפעו:
-  - `src/lib/optimizer/portfolioSimulator.ts`
-  - `supabase/functions/verify-optimization/index.ts`
-  - `src/components/backtest/TradesDetailPanel.tsx`
-  - ייתכן גם `supabase/functions/start-optimization/index.ts` לחיזוק החוזה מול השרת
-- ייתכן migration קטן רק אם אחליט לשמור metadata נוסף לעסקה; אם לא, אשתמש בסכמה הקיימת של `optimization_trades`.
-- לא אבקש ממך שוב להסביר את מבנה הפרויקט; אשתמש בריפו הזה כ-source of truth ואשלים את החלק החיצוני כ-patch מוכן.
+אייצר artifact אחד `/mnt/documents/railway-server-full.zip` שכולל:
+- כל קבצי ה-optimizer המתוקנים (עם הערכים הקבועים של S1)
+- `IndicatorCacheManager` לזירוז
+- שמירת עסקאות ל-`optimization_trades`
+- `server.ts` עם endpoint `/api/optimize` מוכן
+- `package.json` עם dependencies
+- `tsconfig.json`
 
-### תוצאה צפויה
-- האופטימיזציה תמשיך לרוץ דרך השרת החיצוני, אבל עם ליבה מהירה ומסודרת יותר.
-- פאנל העסקאות יתמלא באמת.
-- כפתור האימות יחזיר replay אמיתי ולא בדיקה חלקית.
-- תקבל סט מסודר של קוד מעודכן + חבילת Railway מוכנה, במקום עוד סבב של שאלות.
+## תוצאה
+- S1 = קומבינציה אחת בכל שלב ובכל סיבוב
+- אסטרטגיות 2-5 ממשיכות עם טווחים רגילים
+- חבילת שרת מוכנה להורדה והרצה
+
