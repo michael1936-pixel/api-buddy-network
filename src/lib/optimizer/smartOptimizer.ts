@@ -358,7 +358,17 @@ export async function runSmartOptimization(
         for (const key in round1Zones) delete round1Zones[key];
         console.log('🧹 Freed round1Zones memory');
       }
-      // Evict non-protected cache entries between rounds
+      // At start of Round 2, trim round1Zones to 50 entries per stage
+      if (stage.roundNumber === 2) {
+        for (const key of Object.keys(round1Zones)) {
+          const k = Number(key);
+          if (round1Zones[k] && round1Zones[k].length > 50) {
+            round1Zones[k] = round1Zones[k].slice(0, 50);
+            console.log(`🧹 Trimmed round1Zones[${k}] to 50 entries`);
+          }
+        }
+      }
+      // Evict ALL non-protected cache entries between rounds
       if (prevRound > 0) {
         let evicted = 0;
         for (const [key, entry] of cache) {
@@ -368,6 +378,11 @@ export async function runSmartOptimization(
       }
       // Clear indicator cache between rounds to free float arrays
       indicatorCache.clear();
+      // Force GC at round boundary
+      if (typeof globalThis !== 'undefined' && (globalThis as any).gc) {
+        (globalThis as any).gc();
+        console.log('🧹 GC triggered at round boundary');
+      }
       prevRound = stage.roundNumber;
     }
 
@@ -598,11 +613,11 @@ export async function runSmartOptimization(
         globalResult = updateMultiObjectiveResult(globalResult, result.bestForProfit);
         markBestCacheEntryProtected(cache, si + 1, stage.roundNumber);
 
-        // Save Round 1 results for zone-based tuning in Round 2 (top 200 only to save memory)
+        // Save Round 1 results for zone-based tuning in Round 2 (top 50 only to save memory)
         if (collectAll && result.allTestedResults) {
           const sorted = result.allTestedResults
             .sort((a: any, b: any) => b.trainReturn - a.trainReturn)
-            .slice(0, 200);
+            .slice(0, 50);
           round1Zones[si] = sorted;
         }
 
