@@ -125,6 +125,7 @@ export default function BacktestPage() {
             serverStatus={serverStatus}
             secondsSinceLastUpdate={secondsSinceLastUpdate}
             lastServerUpdateAt={lastServerUpdateAt}
+            optimizerBuild={optimizerBuild}
           />
 
           {runLogs.length > 0 && (
