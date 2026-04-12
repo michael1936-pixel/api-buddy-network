@@ -1,44 +1,53 @@
 
 
-# תיקון: שגיאת "out of range for type integer"
+# התאמת קומבינציות אסטרטגיה 1 בסיבוב 1
 
-## הבעיה
+## ניתוח הפרמטרים (15 פרמטרים)
 
-הערך `total_combos = 24,414,062,500` חורג ממגבלת `integer` (מקס 2.1 מיליארד). זה קורה גם ב-`optimization_runs` וגם ב-`optimization_run_logs`.
+במקום להשתמש ב-`stepMultiplier` אחיד, אגדיר `customRanges` ספציפיים לשלב S1 בסיבוב 1.
 
-## הפתרון
+### 6 פרמטרים עם 3 ערכים (הכי משפיעים):
 
-### 1. מיגרציה — שינוי עמודות מ-integer ל-bigint
+| פרמטר | טווח | step מותאם | ערכים |
+|--------|-------|-----------|--------|
+| s1_ema_fast_len | 5-15 | 5 | 5, 10, 15 |
+| s1_rsi_len | 10-20 | 5 | 10, 15, 20 |
+| s1_adx_strong | 14-24 | 5 | 14, 19, 24 |
+| s1_atr_hi_mult | 0.5-1.2 | 0.35 | 0.5, 0.85, 1.2 |
+| s1_hi_vol_mult | 0.8-1.5 | 0.35 | 0.8, 1.15, 1.5 |
+| s1_bb_mult | 1.8-2.6 | 0.4 | 1.8, 2.2, 2.6 |
 
-שתי טבלאות צריכות עדכון:
+### 9 פרמטרים עם 2 ערכים (min ו-max):
 
-**optimization_runs:**
-- `current_combo`: integer → bigint
-- `total_combos`: integer → bigint
+| פרמטר | טווח | step מותאם | ערכים |
+|--------|-------|-----------|--------|
+| s1_ema_mid_len | 15-30 | 15 | 15, 30 |
+| s1_ema_trend_len | 30-70 | 40 | 30, 70 |
+| s1_atr_len | 10-20 | 10 | 10, 20 |
+| s1_atr_ma_len | 8-16 | 8 | 8, 16 |
+| s1_adx_len | 8-16 | 8 | 8, 16 |
+| s1_bb_len | 15-25 | 10 | 15, 25 |
+| s1_far_from_bb_pc | 1-4 | 3 | 1, 4 |
+| s1_vol_len | 10-20 | 10 | 10, 20 |
+| s1_min_conds | 2-4 | 2 | 2, 4 |
 
-**optimization_run_logs:**
-- `current_combo`: integer → bigint
-- `total_combos`: integer → bigint
-- `combination_cache_size`: integer → bigint
-- `indicator_cache_size`: integer → bigint
+**סה"כ: 3⁶ × 2⁹ = 729 × 512 = 373,248 קומבינציות** ✅
 
-```sql
-ALTER TABLE public.optimization_runs 
-  ALTER COLUMN current_combo TYPE bigint,
-  ALTER COLUMN total_combos TYPE bigint;
+## מה ישתנה
 
-ALTER TABLE public.optimization_run_logs
-  ALTER COLUMN current_combo TYPE bigint,
-  ALTER COLUMN total_combos TYPE bigint,
-  ALTER COLUMN combination_cache_size TYPE bigint,
-  ALTER COLUMN indicator_cache_size TYPE bigint;
-```
+### קובץ: `src/lib/optimizer/smartOptimizer.ts`
 
-### 2. אין שינוי בקוד
+1. **שלב S1 בסיבוב 1 (stage index 2):** יקבל `customRanges` עם ה-steps המותאמים במקום `stepMultiplier: 4`
+2. **שלב S1 בסיבוב 2:** ישתמש ב-`createFineTuneConfig` כמו שאר השלבים (±1 step סביב הערך הטוב מ-R1)
+3. **שאר השלבים:** לא משתנים
 
-הקוד בצד השרת (Railway) לא צריך שינוי — הוא כבר שולח את המספרים הנכונים, רק הDB לא מקבל אותם.
+### קובץ: `/mnt/documents/` — גרסת שרת מעודכנת (ZIP)
 
-## תוצאה צפויה
+אותו שינוי עבור Railway.
 
-אחרי המיגרציה, ה-ServerLogger יפסיק לזרוק שגיאות ותוכל לראות לוגים נכונים בDB. האופטימיזציה תמשיך לרוץ בלי להיתקע.
+## תוצאה
+
+- R1 שלב S1: ~373K קומבינציות (במקום 2K או מיליארדים)
+- R2 שלב S1: fine-tune ±1 step = ~3^15 capped = קטן ומהיר
+- שאר השלבים: ללא שינוי
 
