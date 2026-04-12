@@ -347,6 +347,7 @@ export async function runSmartOptimization(
   zoneExpansionSteps: number = 1,
 ): Promise<SmartOptimizationResult> {
   console.log('════════════════════════════════════════');
+  console.log(`SMART_OPTIMIZER_BUILD=v9`);
   console.log(`Smart Optimizer: ${symbolsData.length} symbols, ${mode} mode`);
   console.log(`Round 1: step ×${round1StepMultiplier} | Round 2: ${numGoodZones} zones ±${zoneExpansionSteps} | Round 3: combo + fine-tune`);
   console.log('════════════════════════════════════════');
@@ -434,6 +435,7 @@ export async function runSmartOptimization(
     }
 
     console.log(`\n▶ Stage ${si + 1}/${stages.length}: ${stage.name} (Round ${stage.roundNumber})`);
+    console.log(`  isFinalTuning=${!!stage.isFinalTuning} useZoneData=${!!stage.useZoneData} customRanges=${!!stage.customRanges} stepMult=${stage.stepMultiplier || 1}`);
 
     // Apply winning combination strategies to Round 3 stages
     if (activeCombination && stage.roundNumber === 3 && !stage.isStrategyCombinationStage) {
