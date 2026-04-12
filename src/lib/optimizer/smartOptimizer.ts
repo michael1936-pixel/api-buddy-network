@@ -675,15 +675,37 @@ export async function runSmartOptimization(
 
       if (result.bestForProfit) {
         const bp = result.bestForProfit.parameters as ExtendedStocksStrategyParameters;
+        const stageTrainReturn = result.bestForProfit.totalTrainReturn;
+        const stageTestReturn = result.bestForProfit.totalTestReturn;
+
         // Extract optimized params
         stage.parametersToOptimize.forEach(param => {
           const value = (bp as any)[param];
           if (value !== undefined) (bestParams as any)[param] = value;
         });
 
-        if (result.bestForProfit.totalTrainReturn > globalBestTrain) {
-          globalBestTrain = result.bestForProfit.totalTrainReturn;
-          globalBestTest = result.bestForProfit.totalTestReturn;
+        // ═══ REGRESSION DETECTION (Round 2+) ═══
+        // If this stage returned worse than global best, rollback to global best params
+        let regressionDetected = false;
+        if (stage.roundNumber >= 2 && globalBestTrain !== -Infinity && stageTrainReturn < globalBestTrain) {
+          regressionDetected = true;
+          console.log(`⚠ REGRESSION detected at stage ${si + 1} (R${stage.roundNumber}): stage=${stageTrainReturn.toFixed(2)}% < global=${globalBestTrain.toFixed(2)}%`);
+          // Rollback: restore params that this stage changed to global best values
+          if (globalResult.bestForProfit) {
+            const globalParams = globalResult.bestForProfit.parameters as ExtendedStocksStrategyParameters;
+            stage.parametersToOptimize.forEach(paramKey => {
+              const globalVal = (globalParams as any)[paramKey];
+              if (globalVal !== undefined) {
+                (bestParams as any)[paramKey] = globalVal;
+              }
+            });
+            console.log(`  ↩ Rolled back ${stage.parametersToOptimize.length} params to global best values`);
+          }
+        }
+
+        if (stageTrainReturn > globalBestTrain) {
+          globalBestTrain = stageTrainReturn;
+          globalBestTest = stageTestReturn;
         }
         globalResult = updateMultiObjectiveResult(globalResult, result.bestForProfit);
         markBestCacheEntryProtected(cache, si + 1, stage.roundNumber);
@@ -704,7 +726,7 @@ export async function runSmartOptimization(
 
         stageResults.push({
           stageNumber: si + 1, stageName: stage.name,
-          bestReturn: result.bestForProfit.totalTrainReturn, bestTestReturn: result.bestForProfit.totalTestReturn,
+          bestReturn: stageTrainReturn, bestTestReturn: stageTestReturn,
           elapsedTime: (Date.now() - stageStart) / 1000,
           plannedCombinations: 0, actualTestedCombinations: 0,
           bestParameters: { ...bestParams },
@@ -713,6 +735,19 @@ export async function runSmartOptimization(
     } catch (e: any) {
       if (abortSignal?.aborted) break;
       console.warn(`Stage ${si + 1} error: ${e.message}`);
+    }
+  }
+
+  // ═══ FINAL COMPARISON: Fine-tuned bestParams vs Global Best ═══
+  // If the last stage produced results, compare against global best
+  const lastStage = stageResults[stageResults.length - 1];
+  if (lastStage && globalResult.bestForProfit) {
+    const fineTunedAvg = (lastStage.bestReturn + lastStage.bestTestReturn) / 2;
+    const globalAvg = (globalResult.bestForProfit.totalTrainReturn + globalResult.bestForProfit.totalTestReturn) / 2;
+    if (globalAvg > fineTunedAvg) {
+      console.log(`✓ Final comparison: Global best (${globalAvg.toFixed(2)}%) wins over fine-tuned (${fineTunedAvg.toFixed(2)}%) — using global`);
+    } else {
+      console.log(`✓ Final comparison: Fine-tuned (${fineTunedAvg.toFixed(2)}%) wins over global (${globalAvg.toFixed(2)}%) — fine-tuning improved results`);
     }
   }
 
