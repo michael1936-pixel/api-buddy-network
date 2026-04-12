@@ -340,6 +340,7 @@ export async function runSmartOptimization(
   onProgress?: (info: SmartProgressInfo) => void,
   abortSignal?: AbortSignal,
   _useMemory = false,
+  abortCheckFn?: () => Promise<boolean>,
   _objective = 'profit',
   _enableRound2 = true,
   _enableRound3 = true,
