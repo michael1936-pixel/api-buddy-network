@@ -29,6 +29,7 @@ export default function BacktestPage() {
     combinationsPerSecond, error, bestTrainReturn, bestTestReturn,
     symbolQueue, queueIndex, queueResults, stageEstimates,
     serverStatus, secondsSinceLastUpdate, lastServerUpdateAt, runLogs,
+    optimizationMode, setOptimizationMode,
     runOptimization, runOptimizationQueue, addToQueue, stopOptimization, toggleStage, rehydrate,
   } = useOptimizationStore();
 
@@ -73,7 +74,7 @@ export default function BacktestPage() {
 
   return (
     <div className="space-y-4">
-      <SymbolSearch onSelect={handleRunOptimization} onRunQueue={handleRunQueue} onAddToQueue={handleAddToQueue} isRunning={isRunning} />
+      <SymbolSearch onSelect={handleRunOptimization} onRunQueue={handleRunQueue} onAddToQueue={handleAddToQueue} isRunning={isRunning} mode={optimizationMode} onModeChange={setOptimizationMode} />
 
       {/* Queue status */}
       {symbolQueue.length > 1 && (
