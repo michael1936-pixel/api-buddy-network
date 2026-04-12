@@ -484,6 +484,21 @@ export async function runSmartOptimization(
     } else if (stage.useZoneData && stage.round1StageIndex !== undefined && round1Zones[stage.round1StageIndex]) {
       const zones = collectTopZones(round1Zones[stage.round1StageIndex], stage.parametersToOptimize, numGoodZones);
       stageCfg = createZoneConfig(baseConfig, zones, stage.parametersToOptimize, bestParams, zoneExpansionSteps);
+
+      // Guard against Cartesian explosion: if zone config produces too many combos, fallback to fine-tune
+      const numericKeys = stage.parametersToOptimize.filter(k => !BOOLEAN_PARAMS_SET.has(k));
+      let estimatedCombos = 1;
+      for (const key of numericKeys) {
+        const val = (stageCfg as any)[key];
+        if (val?.values?.length) estimatedCombos *= val.values.length;
+        else if (val && typeof val === 'object' && 'min' in val && 'max' in val && 'step' in val) {
+          estimatedCombos *= Math.max(1, Math.floor((val.max - val.min) / val.step) + 1);
+        }
+      }
+      if (estimatedCombos > 5000) {
+        console.log(`⚠ Zone config too large (${estimatedCombos} combos), falling back to fine-tune for stage ${si}`);
+        stageCfg = createFineTuneConfig(baseConfig, bestParams, stage.parametersToOptimize, 2);
+      }
     } else if (stage.roundNumber === 2) {
       // R2 fallback: fine-tune around best values instead of full range
       stageCfg = createFineTuneConfig(baseConfig, bestParams, stage.parametersToOptimize, 2);
