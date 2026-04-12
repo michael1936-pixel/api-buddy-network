@@ -417,15 +417,9 @@ export const SmartOptimizationProgressCard: React.FC<SmartOptimizationProgressPr
 
       {/* Rounds */}
       <div className="p-4 space-y-3 max-h-[350px] overflow-y-auto">
-        {stages.length >= STAGES_PER_ROUND && (
-          <RoundSection roundNumber={1} stages={stages} stageResults={stageResults} enabledStages={enabledStages} onStageToggle={onStageToggle} currentStage={currentStage} stageProgressMap={stageProgressMap} startIndex={0} stageEstimates={stageEstimates} />
-        )}
-        {stages.length >= STAGES_PER_ROUND * 2 && (
-          <RoundSection roundNumber={2} stages={stages} stageResults={stageResults} enabledStages={enabledStages} onStageToggle={onStageToggle} currentStage={currentStage} stageProgressMap={stageProgressMap} startIndex={STAGES_PER_ROUND} stageEstimates={stageEstimates} />
-        )}
-        {stages.length >= STAGES_PER_ROUND * 3 && (
-          <RoundSection roundNumber={3} stages={stages} stageResults={stageResults} enabledStages={enabledStages} onStageToggle={onStageToggle} currentStage={currentStage} stageProgressMap={stageProgressMap} startIndex={STAGES_PER_ROUND * 2} stageEstimates={stageEstimates} />
-        )}
+        {getRoundStageRanges(stages).map(({ round, start, count }) => (
+          <RoundSection key={round} roundNumber={round} stages={stages} stageResults={stageResults} enabledStages={enabledStages} onStageToggle={onStageToggle} currentStage={currentStage} stageProgressMap={stageProgressMap} startIndex={start} stageCount={count} stageEstimates={stageEstimates} />
+        ))}
       </div>
 
       {/* Progress Bars */}
