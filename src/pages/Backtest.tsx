@@ -32,11 +32,17 @@ export default function BacktestPage() {
     runOptimization, runOptimizationQueue, addToQueue, stopOptimization, toggleStage, rehydrate,
   } = useOptimizationStore();
 
-  // Compute stage estimates once
+  // Compute stage estimates once and sync to store for polling
   const computedEstimates = useMemo(() => {
     if (Object.keys(stageEstimates).length > 0) return stageEstimates;
     return estimateAllStageCombinations(NNE_PRESET_CONFIG);
   }, [stageEstimates]);
+
+  useEffect(() => {
+    if (Object.keys(computedEstimates).length > 0 && Object.keys(stageEstimates).length === 0) {
+      useOptimizationStore.setState({ stageEstimates: computedEstimates });
+    }
+  }, [computedEstimates, stageEstimates]);
 
   useEffect(() => { rehydrate(); }, []);
 
