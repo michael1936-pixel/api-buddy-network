@@ -103,25 +103,51 @@ function generateDynamicStages(stepMult: number = 4): OptimizationStage[] {
   // Round 1: 7 stages — broad scan (step ×4)
   // Stages 0-2 (Long, Short, S1 EMA): strat1=true only
   // Stages 3-6 (S2-S5): each strategy runs ALONE (strat1=false)
+  // S1 EMA stage (index 2) gets custom ranges to target ~373K combos instead of stepMult
+  const S1_CUSTOM_RANGES: Record<string, { min: number; max: number; step: number }> = {
+    // 6 high-impact params → 3 values each
+    s1_ema_fast_len: { min: 5, max: 15, step: 5 },
+    s1_rsi_len: { min: 10, max: 20, step: 5 },
+    s1_adx_strong: { min: 14, max: 24, step: 5 },
+    s1_atr_hi_mult: { min: 0.5, max: 1.2, step: 0.35 },
+    s1_hi_vol_mult: { min: 0.8, max: 1.5, step: 0.35 },
+    s1_bb_mult: { min: 1.8, max: 2.6, step: 0.4 },
+    // 9 secondary params → 2 values each (min, max)
+    s1_ema_mid_len: { min: 15, max: 30, step: 15 },
+    s1_ema_trend_len: { min: 30, max: 70, step: 40 },
+    s1_atr_len: { min: 10, max: 20, step: 10 },
+    s1_atr_ma_len: { min: 8, max: 16, step: 8 },
+    s1_adx_len: { min: 8, max: 16, step: 8 },
+    s1_bb_len: { min: 15, max: 25, step: 10 },
+    s1_far_from_bb_pc: { min: 1, max: 4, step: 3 },
+    s1_vol_len: { min: 10, max: 20, step: 10 },
+    s1_min_conds: { min: 2, max: 4, step: 2 },
+  };
+
   for (let i = 0; i < 7; i++) {
     const stratNum = i - 1;
     const isS1Stage = i <= 2; // Long, Short, S1 EMA
+    const isS1EmaStage = i === 2;
     stages.push({
-      ...BASE_STAGES[i], roundNumber: 1, stepMultiplier: stepMult,
+      ...BASE_STAGES[i], roundNumber: 1, stepMultiplier: isS1EmaStage ? 1 : stepMult,
       enabledStrategies: { strat1: isS1Stage, strat2: stratNum === 2, strat3: stratNum === 3, strat4: stratNum === 4, strat5: stratNum === 5 },
       disableGlobalFilters: true, filterKey: STAGE_FILTER_KEYS[i],
+      ...(isS1EmaStage ? { customRanges: S1_CUSTOM_RANGES } : {}),
     });
   }
 
-  // Round 2: 7 stages — zone fine-tuning
+  // Round 2: 7 stages — zone fine-tuning (S1 uses fineTune instead of zones)
   // Same strategy isolation as R1: S2-S5 run alone without S1
   for (let i = 0; i < 7; i++) {
     const stratNum = i - 1;
     const isS1Stage = i <= 2;
+    const isS1EmaStage = i === 2;
     stages.push({
       ...BASE_STAGES[i], name: `דיוק ${BASE_STAGES[i].name}`, roundNumber: 2,
       enabledStrategies: { strat1: isS1Stage, strat2: stratNum === 2, strat3: stratNum === 3, strat4: stratNum === 4, strat5: stratNum === 5 },
-      disableGlobalFilters: true, useZoneData: true, round1StageIndex: i, filterKey: STAGE_FILTER_KEYS[i],
+      disableGlobalFilters: true, filterKey: STAGE_FILTER_KEYS[i],
+      // S1 EMA: use fine-tune ±1 instead of zone expansion (too many params)
+      ...(isS1EmaStage ? { isFinalTuning: true, tuneRange: 1 } : { useZoneData: true, round1StageIndex: i }),
     });
   }
 
