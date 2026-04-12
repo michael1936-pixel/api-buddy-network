@@ -8,6 +8,23 @@ import type {
 } from './types';
 import { runPortfolioBacktest, preFilterSymbols, PreFilteredSymbolData } from './portfolioSimulator';
 import { IndicatorCacheManager } from './indicatorCache';
+
+/** Insert into a sorted-descending top-N array, maintaining max size */
+function insertTopN(
+  arr: Array<{ params: ExtendedStocksStrategyParameters; trainReturn: number }>,
+  item: { params: ExtendedStocksStrategyParameters; trainReturn: number },
+  maxN: number
+) {
+  if (arr.length >= maxN && item.trainReturn <= arr[arr.length - 1].trainReturn) return;
+  // Binary insert
+  let lo = 0, hi = arr.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (arr[mid].trainReturn > item.trainReturn) lo = mid + 1; else hi = mid;
+  }
+  arr.splice(lo, 0, item);
+  if (arr.length > maxN) arr.length = maxN;
+}
 import { createEmptyMultiObjectiveResult, updateMultiObjectiveResult } from './multiObjectiveMetrics';
 import { getMinConstraint } from './parameterValidation';
 

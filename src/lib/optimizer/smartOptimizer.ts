@@ -506,9 +506,12 @@ export async function runSmartOptimization(
         globalResult = updateMultiObjectiveResult(globalResult, result.bestForProfit);
         markBestCacheEntryProtected(cache, si + 1, stage.roundNumber);
 
-        // Save Round 1 results for zone-based tuning in Round 2
+        // Save Round 1 results for zone-based tuning in Round 2 (top 200 only to save memory)
         if (collectAll && result.allTestedResults) {
-          round1Zones[si] = result.allTestedResults;
+          const sorted = result.allTestedResults
+            .sort((a: any, b: any) => b.trainReturn - a.trainReturn)
+            .slice(0, 200);
+          round1Zones[si] = sorted;
         }
 
         stageResults.push({
