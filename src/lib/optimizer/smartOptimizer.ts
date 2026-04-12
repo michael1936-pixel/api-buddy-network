@@ -7,6 +7,10 @@ import type {
   ExtendedStocksOptimizationConfig, ExtendedStocksStrategyParameters,
   SymbolData, PeriodSplit, MultiObjectiveResult,
 } from './types';
+
+/** Build version — always logged (even when ENABLE_SMART_OPTIMIZER_LOGS=false)
+ *  so we can verify which code Railway is actually running */
+export const OPTIMIZER_BUILD = 'v10-2026-04-12';
 import {
   optimizePortfolio, ProgressInfo, CombinationCache, markBestCacheEntryProtected,
   DEFAULT_EXTENDED_STOCKS_PARAMETERS,
@@ -347,9 +351,10 @@ export async function runSmartOptimization(
   numGoodZones: number = 10,
   zoneExpansionSteps: number = 1,
 ): Promise<SmartOptimizationResult> {
+  // Always log build version — critical for verifying Railway deployment
+  console.log(`SMART_OPTIMIZER_BUILD=${OPTIMIZER_BUILD}`);
   if (ENABLE_SMART_OPTIMIZER_LOGS) {
     console.log('════════════════════════════════════════');
-    console.log(`SMART_OPTIMIZER_BUILD=v9`);
     console.log(`Smart Optimizer: ${symbolsData.length} symbols, ${mode} mode`);
     console.log(`Round 1: step ×${round1StepMultiplier} | Round 2: ${numGoodZones} zones ±${zoneExpansionSteps} | Round 3: combo + fine-tune`);
     console.log('════════════════════════════════════════');

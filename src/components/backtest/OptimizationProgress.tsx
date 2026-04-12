@@ -53,6 +53,7 @@ interface SmartOptimizationProgressProps {
   serverStatus?: 'active' | 'slow' | 'stalled' | 'idle';
   secondsSinceLastUpdate?: number;
   lastServerUpdateAt?: string | null;
+  optimizerBuild?: string | null;
 }
 
 // Dynamic: compute round boundaries from actual stage data
@@ -265,7 +266,8 @@ export const SmartOptimizationProgressCard: React.FC<SmartOptimizationProgressPr
   onSkipStage, onStop, elapsedTime, isRunning, enabledStages, onStageToggle,
   stageProgress: stageProgressMap, preRunMode = false, overallCombinations, 
   combinationsPerSecond, symbol, bestTrainReturn, bestTestReturn, stageEstimates,
-  serverStatus = 'idle', secondsSinceLastUpdate = 0, lastServerUpdateAt
+  serverStatus = 'idle', secondsSinceLastUpdate = 0, lastServerUpdateAt,
+  optimizerBuild
 }) => {
   const overallProgress = useMemo(() => {
     const enabledCount = enabledStages.filter(Boolean).length;
@@ -354,6 +356,11 @@ export const SmartOptimizationProgressCard: React.FC<SmartOptimizationProgressPr
           <div className="flex items-center gap-2 text-muted-foreground">
             <Clock className="w-4 h-4" />
             <span className="text-sm">{formatTime(elapsedTime)}</span>
+            {optimizerBuild && (
+              <Badge variant="outline" className="text-xs font-mono border-primary/40 text-primary">
+                build: {optimizerBuild}
+              </Badge>
+            )}
           </div>
           <div className="flex items-center gap-3">
             <div className="w-3 h-3 rounded-full bg-emerald-500 animate-pulse" />

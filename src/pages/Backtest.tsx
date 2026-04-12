@@ -28,7 +28,7 @@ export default function BacktestPage() {
     smartProgress, stageProgressMap, overallCombinations, elapsedTime,
     combinationsPerSecond, error, bestTrainReturn, bestTestReturn,
     symbolQueue, queueIndex, queueResults, stageEstimates,
-    serverStatus, secondsSinceLastUpdate, lastServerUpdateAt, runLogs,
+    serverStatus, secondsSinceLastUpdate, lastServerUpdateAt, runLogs, optimizerBuild,
     optimizationMode, setOptimizationMode,
     runOptimization, runOptimizationQueue, addToQueue, stopOptimization, toggleStage, rehydrate,
   } = useOptimizationStore();
@@ -125,6 +125,7 @@ export default function BacktestPage() {
             serverStatus={serverStatus}
             secondsSinceLastUpdate={secondsSinceLastUpdate}
             lastServerUpdateAt={lastServerUpdateAt}
+            optimizerBuild={optimizerBuild}
           />
 
           {runLogs.length > 0 && (
