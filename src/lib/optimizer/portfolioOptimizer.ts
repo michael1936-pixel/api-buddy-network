@@ -181,7 +181,7 @@ export async function optimizePortfolio(
       const cached = combinationCache.get(key)!;
       cacheHits++;
       if (cached.trainReturn > bestTrainReturn) { bestTrainReturn = cached.trainReturn; bestTestReturn = cached.testReturn; }
-      if (collectAllResults) allResults.push({ params, trainReturn: cached.trainReturn });
+      if (collectAllResults) insertTopN(allResults, { params, trainReturn: cached.trainReturn }, 200);
       current++;
     } else {
       const result = runPortfolioBacktest(symbolsData, params, periodSplit, mode, simConfig, preFiltered, indicatorCache);
@@ -204,7 +204,7 @@ export async function optimizePortfolio(
             strategyEnables: { enable_strat1: params.enable_strat1, enable_strat2: params.enable_strat2, enable_strat3: params.enable_strat3, enable_strat4: params.enable_strat4, enable_strat5: params.enable_strat5 },
           });
         }
-        if (collectAllResults) allResults.push({ params, trainReturn: result.totalTrainReturn });
+        if (collectAllResults) insertTopN(allResults, { params, trainReturn: result.totalTrainReturn }, 200);
       }
     }
 

@@ -117,16 +117,26 @@ export class IndicatorCacheManager {
   private hits = 0;
   private misses = 0;
 
+  private maxSize = 50; // LRU limit — each entry holds large float arrays
+
   getOrCompute(candles: Candle[], params: ExtendedStocksStrategyParameters): PrecomputedData {
     const key = getIndicatorParamsKey(params);
     const cached = this.cache.get(key);
     if (cached) {
       this.hits++;
+      // Move to end (most recently used)
+      this.cache.delete(key);
+      this.cache.set(key, cached);
       return cached;
     }
     this.misses++;
     const data = precomputeIndicators(candles, params);
     this.cache.set(key, data);
+    // Evict oldest entry if over limit
+    if (this.cache.size > this.maxSize) {
+      const firstKey = this.cache.keys().next().value;
+      if (firstKey !== undefined) this.cache.delete(firstKey);
+    }
     return data;
   }
 
