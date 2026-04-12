@@ -152,11 +152,11 @@ const StageRow: React.FC<{
         שלב {displayNumber} - {stage.stageName}
       </span>
       {stageProgress ? (
-        <span className="text-xs text-muted-foreground font-mono" dir="ltr">
+      <span className="text-xs text-muted-foreground" dir="ltr">
           {formatNumber(stageProgress.current)} / {formatNumber(stageProgress.total)}
         </span>
       ) : combinationsEstimate ? (
-        <span className="text-xs text-muted-foreground font-mono">
+        <span className="text-xs text-muted-foreground">
           {formatNumber(combinationsEstimate)} קומבינציות
         </span>
       ) : null}
@@ -353,7 +353,7 @@ export const SmartOptimizationProgressCard: React.FC<SmartOptimizationProgressPr
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2 text-muted-foreground">
             <Clock className="w-4 h-4" />
-            <span className="text-sm font-mono">{formatTime(elapsedTime)}</span>
+            <span className="text-sm">{formatTime(elapsedTime)}</span>
           </div>
           <div className="flex items-center gap-3">
             <div className="w-3 h-3 rounded-full bg-emerald-500 animate-pulse" />
@@ -379,7 +379,7 @@ export const SmartOptimizationProgressCard: React.FC<SmartOptimizationProgressPr
               <BarChart3 className="w-4 h-4 text-emerald-400" />
             </div>
             <div className="text-right space-y-1">
-              <p className="text-xl font-bold text-emerald-400 font-mono" dir="ltr">
+              <p className="text-xl font-bold text-emerald-400" dir="ltr">
                 {overallCombinations ? (
                   <>{formatNumber(overallCombinations.current)} / {formatNumber(overallCombinations.total)}</>
                 ) : (
@@ -397,7 +397,7 @@ export const SmartOptimizationProgressCard: React.FC<SmartOptimizationProgressPr
               <Flame className="w-4 h-4 text-purple-400" />
             </div>
             <div className="text-right space-y-1">
-              <p className="text-xl font-bold text-purple-400 font-mono" dir="ltr">
+              <p className="text-xl font-bold text-purple-400" dir="ltr">
                 {progress ? (
                   <>{formatNumber(progress.current)} / {formatNumber(progress.total)}</>
                 ) : '0 / 0'}
@@ -414,10 +414,10 @@ export const SmartOptimizationProgressCard: React.FC<SmartOptimizationProgressPr
               <Zap className="w-4 h-4 text-amber-400" />
             </div>
             <div className="text-right space-y-1">
-              <p className={cn("text-xl font-bold font-mono", (bestTrainReturn ?? 0) >= 0 ? "text-emerald-400" : "text-red-400")}>
+              <p className={cn("text-xl font-bold", (bestTrainReturn ?? 0) >= 0 ? "text-emerald-400" : "text-red-400")}>
                 Train: {bestTrainReturn != null ? `${bestTrainReturn > 0 ? '+' : ''}${bestTrainReturn.toFixed(1)}%` : '--'}
               </p>
-              <p className={cn("text-sm font-bold font-mono", (bestTestReturn ?? 0) >= 0 ? "text-blue-400" : "text-red-400")}>
+              <p className={cn("text-sm font-bold", (bestTestReturn ?? 0) >= 0 ? "text-blue-400" : "text-red-400")}>
                 Test: {bestTestReturn != null ? `${bestTestReturn > 0 ? '+' : ''}${bestTestReturn.toFixed(1)}%` : '--'}
               </p>
             </div>
@@ -463,7 +463,7 @@ export const SmartOptimizationProgressCard: React.FC<SmartOptimizationProgressPr
               <div className="h-full bg-gradient-to-r from-purple-600 to-purple-400 transition-all duration-300" style={{ width: `${stageProgressPct}%` }} />
             </div>
             <div className="flex items-center justify-between mt-2 text-xs text-muted-foreground">
-              <span>מהירות: {speed > 0 ? `${speed.toFixed(0)} קומבינציות/שניה` : 'ממתין...'}</span>
+              <span>מהירות: {speed > 0 ? `${speed.toFixed(0)} קומבינציות/שניה` : 'ממתין...'} | ממוצע כללי: {elapsedTime > 0 && overallCombinations ? `${Math.round(overallCombinations.current / elapsedTime)} קומבינציות/שניה` : '--'}</span>
               {estimatedTimeRemaining && speed > 0 && (
                 <span>זמן משוער: {formatTime(estimatedTimeRemaining)}</span>
               )}
@@ -497,10 +497,10 @@ export const SmartOptimizationProgressCard: React.FC<SmartOptimizationProgressPr
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-4">
                     <span className="text-emerald-400 font-bold">
-                      Train: {currentStageResult.bestReturn > 0 ? '+' : ''}{currentStageResult.bestReturn.toFixed(2)}%
+                      Train: {currentStageResult.bestReturn > 0 ? '+' : ''}{currentStageResult.bestReturn.toFixed(1)}%
                     </span>
                     <span className="text-blue-400 font-bold">
-                      Test: {currentStageResult.bestTestReturn > 0 ? '+' : ''}{currentStageResult.bestTestReturn.toFixed(2)}%
+                      Test: {currentStageResult.bestTestReturn > 0 ? '+' : ''}{currentStageResult.bestTestReturn.toFixed(1)}%
                     </span>
                   </div>
                   <span className="text-muted-foreground text-sm">התרכובת הטובה ביותר:</span>
@@ -519,13 +519,13 @@ export const SmartOptimizationProgressCard: React.FC<SmartOptimizationProgressPr
                 <div className="space-y-1">
                   <div className="flex items-center justify-between">
                     <span className="text-emerald-400 font-bold text-lg">
-                      {bestOverallResult.bestReturn > 0 ? '+' : ''}{bestOverallResult.bestReturn.toFixed(2)}%
+                      {bestOverallResult.bestReturn > 0 ? '+' : ''}{bestOverallResult.bestReturn.toFixed(1)}%
                     </span>
                     <span className="text-muted-foreground text-sm">התרכובת הטובה ביותר (Train):</span>
                   </div>
                   <div className="flex items-center justify-between">
                     <span className="text-blue-400 font-bold text-lg">
-                      {bestOverallResult.bestTestReturn > 0 ? '+' : ''}{bestOverallResult.bestTestReturn.toFixed(2)}%
+                      {bestOverallResult.bestTestReturn > 0 ? '+' : ''}{bestOverallResult.bestTestReturn.toFixed(1)}%
                     </span>
                     <span className="text-muted-foreground text-sm">הבדיקה הטובה ביותר (Test):</span>
                   </div>
