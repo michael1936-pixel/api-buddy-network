@@ -283,7 +283,9 @@ function startPolling(
   }, 1000);
 
   pollTimer = setInterval(async () => {
-    const { activeRunId, isRunning } = get();
+    const state = get();
+    if (!state) { stopPolling(); return; }
+    const { activeRunId, isRunning } = state;
     if (!activeRunId || !isRunning) { stopPolling(); return; }
 
     // Fetch run status + latest logs in parallel
