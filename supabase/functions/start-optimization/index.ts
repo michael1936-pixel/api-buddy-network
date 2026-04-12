@@ -38,7 +38,7 @@ Deno.serve(async (req) => {
     // 1. Fetch historical market data for all symbols
     const symbolsData: Array<{
       symbol: string;
-      data: Array<{ timestamp: string; open: number; high: number; low: number; close: number; volume: number }>;
+      candles: Array<{ timestamp: string; open: number; high: number; low: number; close: number; volume: number }>;
     }> = [];
 
     for (const symbol of symbols) {
@@ -71,7 +71,7 @@ Deno.serve(async (req) => {
       }
 
       console.log(`Loaded ${allBars.length} bars for ${symbol}`);
-      symbolsData.push({ symbol, data: allBars });
+      symbolsData.push({ symbol, candles: allBars });
     }
 
     if (symbolsData.length === 0) {
