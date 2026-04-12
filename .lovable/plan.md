@@ -1,20 +1,29 @@
 
 
-# עדכון שרת Railway — סקריפט מוכן לטרמינל
+# תיקון OOM בשלב 8-9 (סיבוב 2 — Zone Tuning)
 
-## הריפו
-`https://github.com/michael1936-pixel/algomaykl-optimizer`
+## הבעיה
+הנתונים ב-DB מראים דפוס חוזר: כל ריצה מתה בשלב 8-9 (דיוק ניהול לונג/שורט). אלה שלבי Round 2 שמשתמשים ב-`useZoneData` — אוספים את כל תוצאות Round 1 לזיכרון כדי למצוא "אזורי ניצחון". זה גורם ל-OOM crash של ה-worker.
 
-## מה אעשה
-אייצר לך סקריפט שלם עם 3 קבצים — תעתיק לטרמינל ותריץ. הכל אוטומטי:
+## הפתרון — 3 שינויים
 
-1. `git clone` של הריפו
-2. יצירת `workers/optimizer-worker.ts` (heartbeat + isolation)
-3. החלפת `server.ts` (fork לכל סימבול)
-4. הוספת ניקוי זיכרון ל-`optimizer/smartOptimizer.ts`
-5. עדכון `package.json` עם `--expose-gc`
-6. `git push` — Railway עושה deploy אוטומטי
+### 1. ניקוי זיכרון בין שלבים (`smartOptimizer.ts`)
+- אחרי כל שלב: לנקות את `combinationCache`, לשחרר מערכים גדולים
+- לקרוא `global.gc?.()` בין שלבים
+- להגביל את `collectTopZones` ל-top 50 zones במקום כולם
 
-## הערה טכנית
-הסקריפט משתמש ב-`cat > file << 'EOF'` כדי ליצור/להחליף קבצים ישירות מהטרמינל בלי צורך לפתוח עורך.
+### 2. הגבלת תוצאות Round 1 שנשמרות
+- במקום לשמור את **כל** תוצאות Round 1, לשמור רק top 200 לפי trainReturn
+- זה מספיק לחישוב zones איכותי בלי להרוג את הזיכרון
+
+### 3. עדכון `workers/optimizer-worker.ts` 
+- הוספת `global.gc?.()` אחרי כל שלב (לא רק כל 500 combos)
+- לוג של `process.memoryUsage()` בין שלבים לדיבוג
+
+## קבצים שישתנו
+- `src/lib/optimizer/smartOptimizer.ts` — ניקוי cache + הגבלת zones
+- צריך לייצר ZIP חדש לריפו ב-GitHub
+
+## הערה
+השינויים האלה הם בקוד ה-optimizer שרץ גם בשרת Railway. אייצר ZIP מעודכן שתעלה ל-GitHub.
 
