@@ -225,6 +225,30 @@ export async function optimizePortfolio(
       }
     }
 
+    // Intra-stage memory cleanup every 200 combos
+    if (current > 0 && current % 200 === 0) {
+      // Prune combinationCache to keep only protected + recent entries
+      if (combinationCache && combinationCache.size > 500) {
+        let pruned = 0;
+        for (const [key, entry] of combinationCache) {
+          if (!entry.protected && entry.stageNumber < stageNumber) {
+            combinationCache.delete(key);
+            pruned++;
+          }
+          if (combinationCache.size <= 300) break;
+        }
+        if (pruned > 0) console.log(`🧹 Intra-stage prune: removed ${pruned} old cache entries`);
+      }
+      // Clear indicator cache to free large float arrays
+      if (indicatorCache && indicatorCache.stats.size > 10) {
+        indicatorCache.clear();
+      }
+      // Trigger GC if available
+      if (typeof globalThis !== 'undefined' && (globalThis as any).gc) {
+        (globalThis as any).gc();
+      }
+    }
+
     // Progress
     if (current % 10 === 0 || current === totalCombos) {
       const elapsed = (Date.now() - startTime) / 1000;
