@@ -587,7 +587,7 @@ export async function runSmartOptimization(
       };
 
       let combos = countCombos(stageCfg);
-      if (combos > MAX_STAGE_COMBOS) {
+      if (combos > MAX_STAGE_COMBOS && !stage.customRanges) {
         // Try reducing tuneRange from 2 → 1 → 0
         let tr = 2;
         while (combos > MAX_STAGE_COMBOS && tr > 0) {
