@@ -133,7 +133,7 @@ export class IndicatorCacheManager {
   private cache = new Map<string, PrecomputedData>();
   private hits = 0;
   private misses = 0;
-  private maxSize = 50; // LRU limit — each entry holds large float arrays
+  private maxSize = 500; // LRU limit — 24GB RAM can hold many entries
 
   /** Dynamically reduce cache size for memory-constrained stages */
   setMaxSize(size: number) {

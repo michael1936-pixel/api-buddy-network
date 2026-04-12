@@ -226,27 +226,18 @@ export async function optimizePortfolio(
       }
     }
 
-    // Intra-stage memory cleanup every 200 combos
-    if (current > 0 && current % 200 === 0) {
-      // Aggressive cache pruning — limit to 300 total, not just old stages
-      if (combinationCache && combinationCache.size > 300) {
+    // Intra-stage memory cleanup every 500 combos (light touch — no GC, no indicator cache clear)
+    if (current > 0 && current % 500 === 0) {
+      if (combinationCache && combinationCache.size > 1000) {
         let pruned = 0;
         for (const [key, entry] of combinationCache) {
           if (!entry.protected) {
             combinationCache.delete(key);
             pruned++;
           }
-          if (combinationCache.size <= 200) break;
+          if (combinationCache.size <= 500) break;
         }
         if (pruned > 0) console.log(`🧹 Intra-stage prune: removed ${pruned} cache entries (now ${combinationCache.size})`);
-      }
-      // Clear indicator cache to free large float arrays
-      if (indicatorCache && indicatorCache.stats.size > 5) {
-        indicatorCache.clear();
-      }
-      // Trigger GC if available
-      if (typeof globalThis !== 'undefined' && (globalThis as any).gc) {
-        (globalThis as any).gc();
       }
     }
 
