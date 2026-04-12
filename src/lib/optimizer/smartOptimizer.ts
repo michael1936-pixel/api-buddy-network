@@ -355,8 +355,7 @@ export async function runSmartOptimization(
     console.log('════════════════════════════════════════');
   }
 
-  const stages = generateDynamicStages(round1StepMultiplier);
-  console.log(`Total stages: ${stages.length} (7 + 7 + ${stages.length - 14})`);
+  if (ENABLE_SMART_OPTIMIZER_LOGS) console.log(`Total stages: ${stages.length} (7 + 7 + ${stages.length - 14})`);
 
   const stageResults: StageResult[] = [];
   let bestParams: Partial<ExtendedStocksStrategyParameters> = {};
