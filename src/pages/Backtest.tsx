@@ -244,6 +244,15 @@ export default function BacktestPage() {
           </div>
         )}
       </div>
+
+      {/* Trade details panel */}
+      {selectedResultId && (
+        <TradesDetailPanel
+          optimizationResultId={selectedResultId}
+          symbol={selectedSymbol}
+          onClose={() => setSelectedResultId(null)}
+        />
+      )}
     </div>
   );
 }
