@@ -136,15 +136,18 @@ function generateDynamicStages(stepMult: number = 4): OptimizationStage[] {
     });
   }
 
-  // Round 2: 7 stages — zone fine-tuning
+  // Round 2: 7 stages — zone fine-tuning (S1 uses fineTune instead of zones)
   // Same strategy isolation as R1: S2-S5 run alone without S1
   for (let i = 0; i < 7; i++) {
     const stratNum = i - 1;
     const isS1Stage = i <= 2;
+    const isS1EmaStage = i === 2;
     stages.push({
       ...BASE_STAGES[i], name: `דיוק ${BASE_STAGES[i].name}`, roundNumber: 2,
       enabledStrategies: { strat1: isS1Stage, strat2: stratNum === 2, strat3: stratNum === 3, strat4: stratNum === 4, strat5: stratNum === 5 },
-      disableGlobalFilters: true, useZoneData: true, round1StageIndex: i, filterKey: STAGE_FILTER_KEYS[i],
+      disableGlobalFilters: true, filterKey: STAGE_FILTER_KEYS[i],
+      // S1 EMA: use fine-tune ±1 instead of zone expansion (too many params)
+      ...(isS1EmaStage ? { isFinalTuning: true, tuneRange: 1 } : { useZoneData: true, round1StageIndex: i }),
     });
   }
 
