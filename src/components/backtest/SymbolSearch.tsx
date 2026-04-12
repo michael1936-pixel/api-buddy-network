@@ -6,15 +6,19 @@ import { cn } from "@/lib/utils";
 import { supabase } from "@/integrations/supabase/client";
 import { X, Play } from "lucide-react";
 
+export type OptimizationMode = 'server' | 'local';
+
 interface Props {
   onSelect: (symbol: string) => void;
   onRunQueue?: (symbols: string[]) => void;
   onAddToQueue?: (symbols: string[]) => void;
   disabled?: boolean;
   isRunning?: boolean;
+  mode?: OptimizationMode;
+  onModeChange?: (mode: OptimizationMode) => void;
 }
 
-export default function SymbolSearch({ onSelect, onRunQueue, onAddToQueue, disabled, isRunning }: Props) {
+export default function SymbolSearch({ onSelect, onRunQueue, onAddToQueue, disabled, isRunning, mode = 'server', onModeChange }: Props) {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<{ symbol: string; sector?: string | null }[]>([]);
   const [showDropdown, setShowDropdown] = useState(false);
