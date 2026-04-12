@@ -5,7 +5,7 @@
 import type {
   SymbolData, PeriodSplit, ExtendedStocksOptimizationConfig,
 } from '../lib/optimizer/types';
-import { runSmartOptimization, type SmartProgressInfo } from '../lib/optimizer/smartOptimizer';
+import { runSmartOptimization, type SmartProgressInfo, OPTIMIZER_BUILD } from '../lib/optimizer/smartOptimizer';
 import { NNE_PRESET_CONFIG } from '../lib/optimizer/presetConfigs';
 
 self.onmessage = async (e: MessageEvent) => {
@@ -70,6 +70,7 @@ self.onmessage = async (e: MessageEvent) => {
         finalResult: result.finalResult,
         stageResults: result.stageResults,
         wasStopped: result.wasStopped,
+        optimizerBuild: OPTIMIZER_BUILD,
       });
     }
   } catch (error) {
