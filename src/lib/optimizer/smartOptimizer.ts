@@ -627,6 +627,7 @@ export async function runSmartOptimization(
           console.log(`🧹 Freed round1Zones[${stage.round1StageIndex}] after use`);
         }
 
+        stageResults.push({
           stageNumber: si + 1, stageName: stage.name,
           bestReturn: result.bestForProfit.totalTrainReturn, bestTestReturn: result.bestForProfit.totalTestReturn,
           elapsedTime: (Date.now() - stageStart) / 1000,
