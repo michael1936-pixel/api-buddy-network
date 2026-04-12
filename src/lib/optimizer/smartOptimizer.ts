@@ -10,7 +10,7 @@ import type {
 
 /** Build version — always logged (even when ENABLE_SMART_OPTIMIZER_LOGS=false)
  *  so we can verify which code Railway is actually running */
-export const OPTIMIZER_BUILD = 'v10-2026-04-12';
+export const OPTIMIZER_BUILD = 'v13-2026-04-12-no-cache-reset';
 import {
   optimizePortfolio, ProgressInfo, CombinationCache, markBestCacheEntryProtected,
   DEFAULT_EXTENDED_STOCKS_PARAMETERS,
@@ -350,6 +350,7 @@ export async function runSmartOptimization(
   round1StepMultiplier: number = 4,
   numGoodZones: number = 10,
   zoneExpansionSteps: number = 1,
+  abortCheckFn?: () => Promise<boolean>,
 ): Promise<SmartOptimizationResult> {
   // Always log build version — critical for verifying Railway deployment
   console.log(`SMART_OPTIMIZER_BUILD=${OPTIMIZER_BUILD}`);
@@ -376,6 +377,7 @@ export async function runSmartOptimization(
 
   let activeCombination: { strat1: boolean; strat2: boolean; strat3: boolean; strat4: boolean; strat5: boolean } | null = null;
 
+  let lastAbortCheck = Date.now();
   let prevRound = 0;
   for (let si = 0; si < stages.length; si++) {
     if (abortSignal?.aborted) break;
@@ -419,8 +421,18 @@ export async function runSmartOptimization(
       prevRound = stage.roundNumber;
     }
 
-    // Cache sizing: generous for all rounds
-    indicatorCache.setMaxSize(50);
+    // Abort check — every 5 seconds, check if run was cancelled
+    if (abortCheckFn) {
+      if (!lastAbortCheck) lastAbortCheck = Date.now();
+      if (Date.now() - lastAbortCheck > 5000) {
+        lastAbortCheck = Date.now();
+        const shouldAbort = await abortCheckFn();
+        if (shouldAbort) {
+          console.log(`🛑 Abort signal received at stage ${si + 1}/${stages.length}`);
+          break;
+        }
+      }
+    }
 
     if (ENABLE_SMART_OPTIMIZER_LOGS) {
       console.log(`\n▶ Stage ${si + 1}/${stages.length}: ${stage.name} (Round ${stage.roundNumber})`);
