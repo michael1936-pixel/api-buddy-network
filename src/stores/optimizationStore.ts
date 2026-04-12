@@ -14,6 +14,23 @@ import {
 
 const POLL_INTERVAL = 2000; // poll DB every 2s
 
+export interface RunLogEntry {
+  id: number;
+  run_id: number;
+  symbol: string | null;
+  stage_number: number | null;
+  stage_name: string | null;
+  round_number: number | null;
+  current_combo: number | null;
+  total_combos: number | null;
+  heap_used_mb: number | null;
+  heap_total_mb: number | null;
+  combination_cache_size: number | null;
+  indicator_cache_size: number | null;
+  message: string;
+  created_at: string;
+}
+
 export interface OptimizationState {
   // UI state
   isRunning: boolean;
@@ -40,6 +57,8 @@ export interface OptimizationState {
   queueResults: Record<string, 'pending' | 'running' | 'done' | 'failed'>;
   // Stage estimates
   stageEstimates: Record<number, number>;
+  // Live logs
+  runLogs: RunLogEntry[];
 
   // Actions
   runOptimization: (symbol: string, queryClient: any) => Promise<void>;
@@ -92,6 +111,7 @@ export const useOptimizationStore = create<OptimizationState>((set, get) => ({
   queueIndex: 0,
   queueResults: {},
   stageEstimates: {},
+  runLogs: [],
 
   toggleStage: (index, enabled) => {
     set(state => {
@@ -119,6 +139,7 @@ export const useOptimizationStore = create<OptimizationState>((set, get) => ({
       secondsSinceLastUpdate: 0,
       serverStatus: 'idle',
       stageEstimates: {},
+      runLogs: [],
     });
     lastComboCount = 0;
     lastComboTime = 0;
