@@ -7,12 +7,10 @@ import { create } from 'zustand';
 import { supabase } from '@/integrations/supabase/client';
 import {
   getOptimizationStages,
-  estimateAllStageCombinations,
   type SmartOptimizationProgress,
   type StageStatus,
   type StageResult,
 } from '@/lib/optimizer/smartOptimizer';
-import { NNE_PRESET_CONFIG } from '@/lib/optimizer/presetConfigs';
 
 
 const POLL_INTERVAL = 2000; // poll DB every 2s
