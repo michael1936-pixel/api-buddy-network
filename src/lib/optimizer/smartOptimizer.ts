@@ -342,7 +342,7 @@ export async function runSmartOptimization(
   _onSkipStageCallback?: any,
   _onSaveState?: any,
   _savedState?: any,
-  round1StepMultiplier: number = 6,
+  round1StepMultiplier: number = 4,
   numGoodZones: number = 10,
   zoneExpansionSteps: number = 1,
 ): Promise<SmartOptimizationResult> {
@@ -572,7 +572,7 @@ export async function runSmartOptimization(
 
     // ═══ COMBO GUARD: cap every stage at 300K combos ═══
     {
-      const MAX_STAGE_COMBOS = 100_000;
+      const MAX_STAGE_COMBOS = 300_000;
       const numericKeys = stage.parametersToOptimize.filter(k => !BOOLEAN_PARAMS_SET.has(k));
       const boolCount = stage.parametersToOptimize.filter(k => BOOLEAN_PARAMS_SET.has(k)).length;
 
