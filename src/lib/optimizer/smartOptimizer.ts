@@ -621,7 +621,12 @@ export async function runSmartOptimization(
           round1Zones[si] = sorted;
         }
 
-        stageResults.push({
+        // Free round1Zones entry after Round 2 stage consumed it
+        if (stage.useZoneData && stage.round1StageIndex !== undefined && round1Zones[stage.round1StageIndex]) {
+          delete round1Zones[stage.round1StageIndex];
+          console.log(`🧹 Freed round1Zones[${stage.round1StageIndex}] after use`);
+        }
+
           stageNumber: si + 1, stageName: stage.name,
           bestReturn: result.bestForProfit.totalTrainReturn, bestTestReturn: result.bestForProfit.totalTestReturn,
           elapsedTime: (Date.now() - stageStart) / 1000,
