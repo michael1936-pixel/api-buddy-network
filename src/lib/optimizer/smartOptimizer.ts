@@ -10,7 +10,7 @@ import type {
 
 /** Build version — always logged (even when ENABLE_SMART_OPTIMIZER_LOGS=false)
  *  so we can verify which code Railway is actually running */
-export const OPTIMIZER_BUILD = 'v10-2026-04-12';
+export const OPTIMIZER_BUILD = 'v13-2026-04-12-no-cache-reset';
 import {
   optimizePortfolio, ProgressInfo, CombinationCache, markBestCacheEntryProtected,
   DEFAULT_EXTENDED_STOCKS_PARAMETERS,
