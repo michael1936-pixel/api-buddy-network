@@ -1,49 +1,49 @@
 
 
-# עדכון שרת Railway דרך GitHub
+# עדכון שרת Railway — צעדים בטרמינל
 
-## הגישה הנכונה
-
-כן, זו בדיוק הדרך הנכונה. הנה הצעדים:
-
-## שלב 1 — Clone של הריפו
+## שלב 1 — Clone והכנה
 
 ```bash
-git clone https://github.com/<your-username>/<railway-repo-name>.git
-cd <railway-repo-name>
-```
-
-## שלב 2 — יצירת קובץ Worker חדש
-
-```bash
+git clone https://github.com/<YOUR-USERNAME>/<RAILWAY-REPO-NAME>.git
+cd <RAILWAY-REPO-NAME>
 mkdir -p workers
 ```
-ליצור את הקובץ `workers/optimizer-worker.ts` עם הקוד שנתתי לך.
 
-## שלב 3 — עדכון server.ts
+## שלב 2 — יצירת קובץ Worker
 
-להחליף את הקוד של `processSymbol` ב-`server.ts` בגרסה עם `child_process.fork()`.
+```bash
+cat > workers/optimizer-worker.ts << 'EOF'
+<כאן אשים את הקוד המלא של optimizer-worker.ts>
+EOF
+```
+
+## שלב 3 — החלפת server.ts
+
+```bash
+cat > server.ts << 'EOF'
+<כאן אשים את הקוד המעודכן של server.ts>
+EOF
+```
 
 ## שלב 4 — עדכון smartOptimizer.ts
 
-להוסיף ניקוי cache + GC בסוף כל שלב.
+פה רק מוסיפים 10 שורות בסוף כל שלב — אראה בדיוק איפה.
 
-## שלב 5 — Push ל-GitHub
+## שלב 5 — עדכון package.json ו-Push
 
 ```bash
+# עדכון start command
+npm pkg set scripts.start="node --expose-gc --max-old-space-size=3584 --loader ts-node/esm server.ts"
+
 git add .
 git commit -m "Add worker isolation, heartbeat, memory cleanup"
 git push
 ```
 
-Railway יעשה deploy אוטומטי מה-push.
+Railway יעשה deploy אוטומטי.
 
-## מה אעשה
+## מה אצטרך ממך
 
-אייצר לך 3 קבצים מוכנים להעתקה — אחד אחד, בסדר:
-1. `workers/optimizer-worker.ts` (חדש)
-2. `server.ts` (מעודכן)
-3. שינויים ל-`optimizer/smartOptimizer.ts`
-
-כל קובץ יהיה מלא ומוכן — פשוט להחליף/ליצור.
+תגיד לי מה שם הריפו שלך ב-GitHub (או תשלח לי את הלינק) — ואני אכתוב לך את כל הפקודות מוכנות להעתקה לטרמינל, כולל כל הקוד בתוכן.
 
