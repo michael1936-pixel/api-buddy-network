@@ -226,20 +226,6 @@ export async function optimizePortfolio(
       }
     }
 
-    // Intra-stage memory cleanup every 500 combos (light touch — no GC, no indicator cache clear)
-    if (current > 0 && current % 500 === 0) {
-      if (combinationCache && combinationCache.size > 1000) {
-        let pruned = 0;
-        for (const [key, entry] of combinationCache) {
-          if (!entry.protected) {
-            combinationCache.delete(key);
-            pruned++;
-          }
-          if (combinationCache.size <= 500) break;
-        }
-        if (pruned > 0) console.log(`🧹 Intra-stage prune: removed ${pruned} cache entries (now ${combinationCache.size})`);
-      }
-    }
 
     // Progress
     if (current % 10 === 0 || current === totalCombos) {
