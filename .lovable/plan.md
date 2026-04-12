@@ -1,43 +1,67 @@
 
-# תיקון “נתקע” באופטימיזציה
+עדכון אבחון: עכשיו יש לנו הוכחה שהשורש האמיתי הוא לא רק heartbeat חסר אלא crash אמיתי של שרת האופטימיזציה.
 
-## אבחון
-- בעיית פיצוץ הקומבינציות כבר תוקנה: הריצות האחרונות ירדו לשלב 9 עם `total_combos = 3600`, לא מיליונים.
-- הבעיה הנוכחית היא לייבנס/דיווח התקדמות:
-  - `src/stores/optimizationStore.ts` מסמן `slow` אחרי 30 שניות ו-`stalled` אחרי 120 שניות לפי `optimization_runs.updated_at`.
-  - לטבלת `optimization_runs` אין trigger/function שמעדכנים `updated_at` אוטומטית.
-  - `supabase/functions/start-optimization/index.ts` רק יוצר run ושולח job ל-Railway, בלי heartbeat/watchdog.
-  - `src/pages/Backtest.tsx` מציג כפתור “דלג לשלב הבא”, אבל כרגע הוא רק `console.log` ולא באמת עושה כלום.
-- המשמעות: אם שרת Railway ממשיך לחשב אבל לא כותב ל-DB מספיק זמן, ה-UI נראה “תקוע” גם כשהריצה אולי עוד חיה. זה גם מסביר למה ריצות אחרונות נגמרו כ-`aborted` — כנראה נעצרו ידנית אחרי אזהרת stall.
+מה ראיתי
+- בלוגים של Railway מופיע במפורש:
+  `FATAL ERROR: Ineffective mark-compacts near heap limit Allocation failed - JavaScript heap out of memory`
+- כלומר תהליך ה-Node של האופטימייזר נגמר בגלל זיכרון, סביב תקרת heap של בערך 4GB.
+- במקביל, ה-UI כאן עדיין נשען על `optimization_runs.updated_at` כדי להסיק אם השרת "חי".
+- בסנאפשוט של ה-backend כרגע קיימת הפונקציה `update_optimization_runs_updated_at()` אבל אין trigger פעיל בפועל, לכן גם עדכוני progress לא בהכרח יעדכנו `updated_at` אוטומטית.
+- לכן יש 2 בעיות נפרדות:
+  1. השרת החיצוני קורס מ-OOM.
+  2. כשהוא קורס, הרשומה נשארת `running` או נראית "תקועה" במקום `failed`.
 
-## מה אבצע
-1. לחזק את ה-UI כאן כדי שלא יטעה:
-   - לעדן את לוגיקת ה-stall/store כך שתבדיל בין “אין heartbeat לאחרונה” לבין “הריצה נכשלה באמת”.
-   - לשפר את ההודעה ב-`OptimizationProgress` כך שתציג “אין עדכון מהשרת” במקום להסיק מיד שהריצה תקועה.
-   - להציג זמן עדכון אחרון בצורה ברורה יותר.
-   - להסיר/להשבית זמנית את כפתור הדילוג עד שיהיה backend אמיתי עבורו.
+מה אבצע
+1. לתקן את הבעיה האמיתית בשרת Railway
+- לעדכן את ריפו ה-Railway החיצוני כך שכל ריצה תעבוד בתוך worker/child process מבודד.
+- תהליך האב יישאר חי, יעקוב אחרי ה-worker, ואם ה-worker נסגר/נופל/מקבל exit code חריג:
+  - יעדכן את `optimization_runs` ל-`failed`
+  - ישמור `error_message` ברור כמו `OOM / process exited unexpectedly`
+- להוסיף heartbeat אמיתי כל 10–15 שניות או כל N קומבינציות.
 
-2. להגדיר תיקון אמיתי מול שרת Railway:
-   - להוסיף heartbeat קבוע ל-`optimization_runs` כל 10–15 שניות או כל N קומבינציות.
-   - לוודא שכל update של progress מעדכן גם `updated_at`.
-   - להוסיף try/catch סביב כתיבות progress, ולסמן `failed` + `error_message` במקרה של crash/exception/timeout במקום להשאיר `running`.
+2. להוריד לחץ זיכרון במנוע האופטימיזציה
+- לסנכרן/לתקן בשרת Railway את קבצי מנוע האופטימיזציה המקבילים ל:
+  - `src/lib/optimizer/smartOptimizer.ts`
+  - `src/lib/optimizer/portfolioOptimizer.ts`
+  - `src/lib/optimizer/indicatorCache.ts`
+  - `src/lib/optimizer/portfolioSimulator.ts`
+- לוודא שהשרת לא שומר אובייקטים כבדים לאורך זמן:
+  - לשמור רק top-N קליל של פרמטרים/ציון, לא מערכים מלאים של תוצאות
+  - לקצץ aggressively את `CombinationCache`
+  - לנקות `indicatorCache` ו-zone data מוקדם יותר
+  - להוסיף telemetry של `process.memoryUsage()` בתחילת/סוף כל שלב ובכל heartbeat
+- אם עדיין צריך: להקטין fan-out של שלבים כבדים (פחות zones / פחות top results).
+- רק כפתרון זמני/משלים: להגדיל heap או instance ב-Railway, לא כתחליף לאופטימיזציה בזיכרון.
 
-3. רק אם צריך, להרחיב את הסכמה:
-   - אופציונלית להוסיף `heartbeat_at` או `last_progress_message` אם יתברר ש-`updated_at` לא מספיק אמין.
-   - כרגע אעדיף להתחיל בלי שינוי schema, כי ייתכן ש-heartbeat מסודר על אותו שדה יפתור את זה.
+3. לתקן את אמינות הסטטוס ב-backend
+- להחיל בפועל את trigger של `updated_at` על `optimization_runs` (כרגע רואים פונקציה אבל לא trigger פעיל).
+- אם צריך, להוסיף שדה מפורש כמו `heartbeat_at` כדי להפריד בין "עוד מחשב" לבין "נפל".
+- לעדכן את flow כך שכל progress update ירענן heartbeat, וכל crash יסמן `failed` ולא ישאיר `running`.
 
-## קבצים/אזורים רלוונטיים
-- `src/stores/optimizationStore.ts`
-- `src/components/backtest/OptimizationProgress.tsx`
-- `src/pages/Backtest.tsx`
-- `supabase/functions/start-optimization/index.ts` (אם צריך לשפר dispatch/response)
-- ריפו Railway החיצוני של האופטימיזר — שם נמצא התיקון העיקרי של heartbeat/progress
+4. ליישר את ה-UI למה שבאמת קורה
+- להשאיר את ניסוח "אין עדכון מהשרת" במקום להסיק מיד failure.
+- אם ריצה נשארת בלי heartbeat מעבר לסף, להציג סטטוס חשוד, אבל כשה-backend מסמן כשל אמיתי להציג `failed` ברור.
+- לתקן את תצוגת המונים ב-RTL (כרגע מופיע כמו `3600 / 1150` במקום `1150 / 3600`) עם עטיפת LTR למספרים.
+- לתקן גם את ה-warning בקונסול של `Function components cannot be given refs` באזור progress card, כנראה דרך `Badge`/קומפוננטה דומה שלא משתמשת ב-`forwardRef`.
 
-## פרט טכני חשוב
-התיקון המלא לא יכול להיות רק בפרויקט הזה. השורש האמיתי נמצא בשרת Railway החיצוני, כי הוא זה שאמור לכתוב heartbeat ל-DB בזמן שלבים ארוכים. בלי זה אפשר רק לרכך אזהרות UI, לא לפתור את הבעיה באמת.
+קבצים/אזורים שאגע בהם
+- בפרויקט הזה:
+  - `src/stores/optimizationStore.ts`
+  - `src/components/backtest/OptimizationProgress.tsx`
+  - `src/components/ui/badge.tsx`
+  - `supabase/functions/start-optimization/index.ts`
+  - migration ל-`optimization_runs`
+- בריפו Railway החיצוני:
+  - ה-runner / endpoint שמריץ `/api/optimize`
+  - מנוע האופטימיזציה והעדכונים ל-DB בזמן ריצה
 
-## בדיקות אחרי המימוש
-- להריץ אופטימיזציה אחת end-to-end ולוודא שבמהלך שלב ארוך ה-DB מתעדכן לפחות כל 10–15 שניות.
-- לוודא שה-UI לא מציג “תקוע” כל עוד heartbeat ממשיך להגיע.
-- לוודא ש-crash אמיתי מסומן `failed` עם הודעת שגיאה.
-- לוודא שכפתור עצירה עדיין עובד, ושאין יותר כפתור דילוג מטעה אם לא חיברנו לו backend.
+חשוב
+- בלי גישה לריפו Railway אפשר רק לשפר UI ודיווח.
+- כדי להפסיק את ה-"נתקע" באמת, חייבים לתקן את ה-crash של הזיכרון בשרת החיצוני.
+
+בדיקות אחרי המימוש
+- להריץ אופטימיזציה אחת end-to-end ולוודא שבמהלך ריצה יש heartbeat קבוע.
+- לוודא שאם ה-worker נופל, הרשומה עוברת ל-`failed` תוך זמן קצר עם `error_message`.
+- לוודא שאין יותר מצב של `running` תקוע אחרי crash.
+- לוודא שמונה הקומבינציות מוצג נכון ב-RTL.
+- לוודא שה-warning של refs נעלם מהקונסול.
