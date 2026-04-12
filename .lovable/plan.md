@@ -1,52 +1,31 @@
 
 
-# ניתוח: למה האופטימיזציה התאטה ומה אפשר לעשות מכאן
+# תיקון מהירות האופטימיזציה — חזרה ל-400K+/דקה
 
-## ממצא מרכזי
+## הבעיה
+שינויים שהוספתי ל-`smartOptimizer.ts` גרמו לירידה מ-400K ל-300K קומבינציות/דקה. הקוד הזה רץ גם בשרת Railway.
 
-בדקתי את כל הקוד לעומק. **האופטימיזציה לא רצה בדפדפן/Lovable — היא רצה בשרת Railway.** הזרימה:
+## 3 שינויים שגרמו לאיטיות
 
-```text
-UI (Backtest.tsx)
-  → optimizationStore.runOptimization()
-    → supabase.functions.invoke('start-optimization')  [Edge Function]
-      → fetch(RAILWAY_API_URL + '/api/optimize')        [Railway שרת]
-        → Railway מריץ את הקוד שלו באופן עצמאי
-  ← Polling: optimization_runs table כל 2 שניות
-```
+### 1. `indicatorCache.clear()` בין כל שלב (שורה 423)
+מנקה את כל ה-indicator cache בכל שלב — מכריח חישוב מחדש של RSI, EMA, ATR וכו' עבור 12K+ bars. **זה ההאטה הכי גדולה.**
 
-**הקבצים המקומיים** `src/lib/optimizer/portfolioOptimizer.ts`, `smartOptimizer.ts`, `optimizer.worker.ts` — **הם קוד מת**. אף אחד לא קורא להם בזמן ריצה. השינויים שעשיתי בהם (% 500 במקום % 10, globalBestReturn) **לא משפיעים כלל על מהירות האופטימיזציה**.
+### 2. `indicatorCache.setMaxSize(5)` ב-Round 2/3 (שורה 432)
+Cache של 5 כניסות בלבד = כמעט כל קומבינציה מחשבת אינדיקטורים מאפס.
 
-המהירות שאתה רואה ב-UI (400K/דקה או פחות) מחושבת מ-`optimization_runs.current_combo` שהשרת מעדכן — כלומר מהירות השרת בלבד.
+### 3. Cache eviction + GC בין כל שלב (שורות 416-428)
+ניקוי כל ה-combination cache + קריאת GC ידנית בין כל שלב — מיותר ומאט.
 
-## מה גרם לאיטיות
+## התיקונים
 
-מכיוון שלא שיניתי שום דבר בקוד של Railway, האיטיות נגרמה מאחד מאלה:
-1. **Railway עדכן/הפעיל מחדש** את השרת (cold start)
-2. **כמות הנתונים גדלה** (יותר bars = יותר זמן לכל קומבינציה)
-3. **קוד Railway עצמו** מדווח progress על כל קומבינציה + yields כל 3 איטרציות
+### `src/lib/optimizer/smartOptimizer.ts`:
+1. **מחיקת שורות 416-428** — הסרת inter-stage cleanup שלם (cache eviction + indicatorCache.clear + GC בין שלבים). להשאיר ניקוי רק בין **rounds** (שורות 398-413, שכבר קיים).
+2. **שינוי שורה 432** — `indicatorCache.setMaxSize(5)` → `indicatorCache.setMaxSize(50)` גם ב-Round 2/3.
+3. **השתקת console.log** — להסיר/להחליף ב-no-op את כל ה-console.log בקובץ (שורות 349-356, 386, 394, 404, 411, 422, 426, 437-438, ועוד ~15 מקומות). להשאיר רק שגיאות.
 
-## מה אני יכול לעשות מכאן (Lovable)
+### `src/lib/optimizer/portfolioOptimizer.ts`:
+הקובץ הזה כבר תוקן נכון — progress כל 500 + yield כל 500. אין שינוי נוסף.
 
-### אפשרות 1: לייצר קבצי תיקון מוכנים ל-Railway
-כבר עשיתי את זה — `railway-performance-fix.md`. צריך להעתיק את השינויים לשרת Railway:
-- `onProgress` כל 500 במקום כל 1
-- `setTimeout` כל 200 במקום כל 3
-- throttle כתיבות DB כל 3 שניות
-
-### אפשרות 2: להוסיף אפשרות הרצה מקומית (Local Worker)
-אפשר לחבר את ה-Web Worker שכבר קיים (`optimizer.worker.ts`) ל-UI, כך שאפשר יהיה לבחור:
-- **שרת** — שולח ל-Railway (כמו היום)
-- **מקומי** — מריץ בדפדפן עם ה-Worker (ישיר, בלי latency של DB)
-
-זה יאפשר לך להריץ מקומית כשאתה רוצה מהירות מקסימלית, ולהשתמש בשרת כשאתה צריך ריצות ארוכות.
-
-## תוכנית (אם תאשר)
-
-1. **ניקוי קוד מת** — הסרת console.log מיותרים מקבצי optimizer מקומיים
-2. **חיבור Worker לאפשרות מקומית** — כפתור בחירה ב-SymbolSearch: "שרת" / "מקומי"
-3. **הרצה מקומית** — שימוש ב-`runSmartOptimization()` דרך Worker עם progress ישיר ל-UI (בלי DB polling)
-4. **שמירת תוצאות** — בסיום ריצה מקומית, שמירה ל-`optimization_results` בדיוק כמו שהשרת עושה
-
-**יתרונות**: מהירות מקסימלית (אין overhead של DB), שליטה מלאה על הקוד, אפשר לתקן כאן במקום ב-Railway.
+## תוצאה צפויה
+חזרה ל-400K+ קומבינציות/דקה — חיסכון עיקרי מ-indicator cache שנשאר חי בין שלבים.
 
