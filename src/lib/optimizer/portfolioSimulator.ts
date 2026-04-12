@@ -580,8 +580,8 @@ export function runPortfolioBacktest(
     const testPre = cache.getOrCompute(sd.testCandles, params, testDatasetId);
 
     // Build strategy-specific indicators (rolling arrays)
-    const trainInd = buildIndicatorsFromPrecomputed(trainPre, params);
-    const testInd = buildIndicatorsFromPrecomputed(testPre, params);
+    const trainInd = buildIndicatorsFromPrecomputed(trainPre, params, trainDatasetId);
+    const testInd = buildIndicatorsFromPrecomputed(testPre, params, testDatasetId);
 
     const trainResult = runBacktest(sd.trainCandles, params, trainInd);
     const testResult = runBacktest(sd.testCandles, params, testInd);
