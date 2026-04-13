@@ -105,7 +105,6 @@ function getStopExecPriceShort(stopAtOpen: number | null, trail: number | null, 
  * Key: datasetId + s3_breakout_len + s5_range_len + s5_squeeze_len + enable flags
  */
 const derivedCache = new Map<string, StrategyIndicators>();
-let derivedCacheMaxSize = 2000;
 
 function getDerivedKey(datasetId: string, params: ExtendedStocksStrategyParameters): string {
   return `${datasetId}|${params.enable_strat3 ? params.s3_breakout_len : 0}|${params.enable_strat5 ? params.s5_range_len : 0}|${params.enable_strat5 ? params.s5_squeeze_len : 0}`;
@@ -113,7 +112,7 @@ function getDerivedKey(datasetId: string, params: ExtendedStocksStrategyParamete
 
 /**
  * Build indicators from precomputed data, adding rolling arrays for S3/S5
- * Uses derived cache to avoid recomputing rolling arrays
+ * Uses derived cache to avoid recomputing rolling arrays — no eviction
  */
 export function buildIndicatorsFromPrecomputed(precomputed: PrecomputedData, params: ExtendedStocksStrategyParameters, datasetId?: string): StrategyIndicators {
   if (datasetId) {
@@ -123,7 +122,6 @@ export function buildIndicatorsFromPrecomputed(precomputed: PrecomputedData, par
   }
 
   const ind = { ...precomputed.indicators };
-  // Add rolling arrays for S3 and S5 — computed once via deque
   if (params.enable_strat3 && params.s3_breakout_len > 0) {
     ind.s3RangeHigh = rollingHighest(precomputed.highs, params.s3_breakout_len);
     ind.s3RangeLow = rollingLowest(precomputed.lows, params.s3_breakout_len);
@@ -133,7 +131,6 @@ export function buildIndicatorsFromPrecomputed(precomputed: PrecomputedData, par
       ind.s5RangeHigh = rollingHighest(precomputed.highs, params.s5_range_len);
       ind.s5RangeLow = rollingLowest(precomputed.lows, params.s5_range_len);
     }
-    // s5AtrMa — rolling SMA of ATR
     const atrSma = new Array(precomputed.atrArr.length).fill(NaN);
     const sqLen = params.s5_squeeze_len;
     if (sqLen > 0) {
@@ -150,10 +147,6 @@ export function buildIndicatorsFromPrecomputed(precomputed: PrecomputedData, par
   if (datasetId) {
     const dKey = getDerivedKey(datasetId, params);
     derivedCache.set(dKey, ind);
-    if (derivedCache.size > derivedCacheMaxSize) {
-      const firstKey = derivedCache.keys().next().value;
-      if (firstKey !== undefined) derivedCache.delete(firstKey);
-    }
   }
 
   return ind;
