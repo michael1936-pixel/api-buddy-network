@@ -1,37 +1,30 @@
 
 
-# תיקון אופטימיזציית שרת — שתי בעיות
+# תיקון מהירות אופטימיזציה מקומית — 3 בעיות ביצועים
 
 ## מה מצאתי
 
-1. **השרת `selfless-kindness` רץ עם Memory limit: 12MB** — זה קטן מדי. ה-payload עם 12,374 נרות בלבד הוא כמה MB, בלי לדבר על חישוב אינדיקטורים ואופטימיזציה. השרת כנראה קורס מ-OOM (Out of Memory) ומחזיר 502.
+### בעיה 1: BB מחושב 3 פעמים במקום פעם אחת (קריטי)
+ב-`indicatorCache.ts` שורות 116-119, `calculateBBPine` נקרא **3 פעמים** עם אותם פרמטרים בדיוק — פעם ל-basis, פעם ל-upper, פעם ל-lower. כל קריאה רצה על 12K+ נרות. זה אמור להיות קריאה אחת.
 
-2. **ה-edge function שולחת את כל הנתונים סינכרוני** — היא ממתינה לתשובה מ-Railway, שיכולה לקחת דקות. Edge functions יש להן timeout (בדרך כלל 60 שניות), אז גם אם השרת היה עובד, הפונקציה הייתה עושה timeout.
+### בעיה 2: derivedCache עם eviction
+ב-`portfolioSimulator.ts` שורות 107-157, ה-`derivedCache` מוגבל ל-2000 entries ומוחק entries ישנים. כש-cache miss קורה, נדרש חישוב rolling arrays מחדש.
 
-## מה צריך לעשות
+### בעיה 3: indicatorCache עם LRU eviction
+ב-`indicatorCache.ts` שורות 136-167, ה-`IndicatorCacheManager` מוגבל ל-500 entries עם LRU eviction + `setMaxSize` שיכול לצמצם עוד. כל eviction = חישוב מחדש של RSI, EMA, ATR, ADX, BB על 12K נרות.
 
-### שלב 1: הגדלת זיכרון ב-Railway (עליך לעשות)
-ב-Railway → `selfless-kindness` → Settings → Resources:
-- **הגדל את ה-Memory ל-512MB לפחות** (מומלץ 1GB)
-- זה השינוי הקריטי ביותר — 12MB זה פשוט בלתי אפשרי
+## התיקון
 
-### שלב 2: שינוי ה-edge function ל-fire-and-forget (אני אעשה)
-במקום לחכות לתשובה מ-Railway (ו-timeout), הפונקציה:
-- תשלח את הבקשה ל-Railway **בלי לחכות לתוצאה**
-- תחזיר מיד את ה-`run_id` ללקוח
-- Railway יעדכן את ה-DB ישירות עם progress/results (כמו שהוא כבר עושה)
+### קובץ 1: `src/lib/optimizer/indicatorCache.ts`
+- **תיקון BB כפול**: לקרוא `calculateBBPine` פעם אחת ולשמור את התוצאה, במקום 3 קריאות
+- **הסרת eviction**: להוריד את `maxSize` ואת הלוגיקה של מחיקת entries מה-cache
+- **הסרת `setMaxSize`**: השיטה הזו מאפשרת צמצום cache חיצוני — להסיר
 
-### שלב 3: הוספת error handling טוב יותר (אני אעשה)
-- לוג של גודל ה-payload שנשלח
-- timeout מפורש על ה-fetch ל-Railway
-- הודעות שגיאה ברורות יותר
+### קובץ 2: `src/lib/optimizer/portfolioSimulator.ts`
+- **הסרת eviction מ-derivedCache**: להוריד את `derivedCacheMaxSize` ואת בדיקת הגודל
 
-## סיכום
-| בעיה | פתרון | מי |
-|-------|--------|-----|
-| Memory 12MB | הגדלה ל-512MB+ | אתה ב-Railway |
-| Edge function timeout | fire-and-forget | אני |
-| Error messages ריקות | logging טוב יותר | אני |
-
-**הדבר הראשון והקריטי: להגדיל את הזיכרון ב-Railway. בלי זה שום דבר לא יעבוד.**
+### תוצאה צפויה
+- BB: ×3 שיפור בזמן חישוב אינדיקטורים
+- ביטול eviction: cache hit rate של 100% — אין חישוב כפול של אינדיקטורים
+- הדפדפן מקצה זיכרון לפי הצורך, אין סיבה להגביל
 
